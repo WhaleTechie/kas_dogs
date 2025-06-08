@@ -2,7 +2,7 @@ import os
 import sqlite3
 from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from kas_config import BOT_TOKEN
 from bot.recognition import get_dog_by_photo
 
@@ -30,20 +30,32 @@ async def start(message: types.Message):
 # 📄 Catalog handler as a function
 async def show_catalog(message: types.Message):
     conn = sqlite3.connect("db/dogs.db")
-@@ -47,27 +48,61 @@ async def show_catalog(message: types.Message):
+async def show_catalog(message: types.Message):
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT name, pen, status, description, photo_path FROM dogs"
+    )
+    rows = cur.fetchall()
+    for name, pen, status, desc, photo_path in rows:
+        text = (
+            f"🐶 *{name}*\n"
+            f"📍 Pen: {pen or 'N/A'}\n"
+            f"📋 Status: {status or 'N/A'}\n"
             f"📝 {desc or 'No description yet'}"
         )
 
-        if os.path.exists(photo_path):
-            with open(photo_path, 'rb') as photo:
+        if photo_path and os.path.exists(photo_path):
+            with open(photo_path, "rb") as photo:
                 await bot.send_photo(
                     chat_id=message.chat.id,
                     photo=photo,
                     caption=text,
-                    parse_mode="Markdown"
+                    parse_mode="Markdown",
                 )
         else:
             await message.reply(text, parse_mode="Markdown")
+
+   conn.close()
 
 # ✉️ `/catalog` text command
 @dp.message_handler(commands=['catalog'])

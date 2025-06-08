@@ -1,7 +1,8 @@
 #!/bin/bash
+set -e
 
 echo "📦 Creating virtual environment..."
-python -m venv kasdogs-env
+python -m venv kasdogs310-env
 
 echo "✅ Activating virtual environment..."
 source kasdogs310-env/Scripts/activate
