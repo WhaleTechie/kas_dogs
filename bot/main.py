@@ -15,7 +15,7 @@ async def start(message: types.Message):
     keyboard.add(
         InlineKeyboardButton("🔍 Identify a Dog", callback_data="identify"),
         InlineKeyboardButton("🐶 View Catalog", callback_data="catalog"),
-        InlineKeyboardButton("☕ Support the Project", url="https://t.me/YourTelegramUsername")
+        InlineKeyboardButton("☕ Support the Project", url="https://t.me/proseacode")
     )
 
     await message.reply(
