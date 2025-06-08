@@ -36,6 +36,11 @@ git clone https://github.com/your-username/kas_dogs.git
 cd kas_dogs
 ```
 2. **Create a `.env` file** with `BOT_TOKEN=<token>`
+3. **Run the bot**
+
+```bash
+python -m bot.main
+```
 
 🤝 Want to Help?
 Donate a ☕ to support time and hosting
