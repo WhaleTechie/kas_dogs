@@ -34,6 +34,8 @@
 ```bash
 git clone https://github.com/your-username/kas_dogs.git
 cd kas_dogs
+```
+2. **Create a `.env` file** with `BOT_TOKEN=<token>`
 
 🤝 Want to Help?
 Donate a ☕ to support time and hosting
@@ -45,4 +47,4 @@ Message @proseacode
 📌 About
 This project started in a dog shelter in Turkey where over 700 dogs live. The idea: make it easier for volunteers and adopters to identify and learn about dogs using just a photo.
 
-❤️ Made with love, mud, and fur
+❤️ Made with love, mud, and fur.

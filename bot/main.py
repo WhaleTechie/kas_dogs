@@ -30,7 +30,6 @@ async def start(message: types.Message):
 # 📄 Catalog handler as a function
 async def show_catalog(message: types.Message):
     conn = sqlite3.connect("db/dogs.db")
-async def show_catalog(message: types.Message):
     cur = conn.cursor()
     cur.execute(
         "SELECT name, pen, status, description, photo_path FROM dogs"
@@ -55,7 +54,7 @@ async def show_catalog(message: types.Message):
         else:
             await message.reply(text, parse_mode="Markdown")
 
-   conn.close()
+    conn.close()
 
 # ✉️ `/catalog` text command
 @dp.message_handler(commands=['catalog'])
