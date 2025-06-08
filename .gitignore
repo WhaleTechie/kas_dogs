@@ -1,12 +1,13 @@
-# Ignore environment and system files
+# Ignore Python environment and compiled files
 .env
 __pycache__/
 *.pyc
 
-# Ignore virtual environment
+# Ignore virtual environments
 kasdogs-env/
+kasdogs310-env/
 
-# Ignore local files not for GitHub
+# Ignore local data files
 db/
 photos/
 ml/embeddings.pkl

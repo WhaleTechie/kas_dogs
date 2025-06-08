@@ -4,6 +4,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.utils import executor
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from kas_config import BOT_TOKEN
+from bot.recognition import get_dog_by_photo
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
@@ -29,21 +30,7 @@ async def start(message: types.Message):
 # 📄 Catalog handler as a function
 async def show_catalog(message: types.Message):
     conn = sqlite3.connect("db/dogs.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name, pen, status, description, photo_path FROM dogs")
-    dogs = cursor.fetchall()
-    conn.close()
-
-    if not dogs:
-        await message.reply("📭 No dogs in the catalog yet.")
-        return
-
-    for dog in dogs:
-        dog_id, name, pen, status, desc, photo_path = dog
-        text = (
-            f"🐶 *{name}*\n"
-            f"📍 Pen: {pen or 'N/A'}\n"
-            f"📋 Status: {status or 'N/A'}\n"
+@@ -47,27 +48,61 @@ async def show_catalog(message: types.Message):
             f"📝 {desc or 'No description yet'}"
         )
 
@@ -68,6 +55,40 @@ async def catalog_command(message: types.Message):
 async def handle_catalog_callback(callback_query: types.CallbackQuery):
     await show_catalog(callback_query.message)
     await bot.answer_callback_query(callback_query.id)
+
+# 🔍 Callback for identification button
+@dp.callback_query_handler(lambda c: c.data == 'identify')
+async def handle_identify_callback(callback_query: types.CallbackQuery):
+    await bot.send_message(callback_query.from_user.id, "📸 Please send a photo of the dog you want to identify.")
+    await bot.answer_callback_query(callback_query.id)
+
+
+# 📷 Photo handler using embedding search
+@dp.message_handler(content_types=['photo'])
+async def handle_photo(message: types.Message):
+    photo = message.photo[-1]
+    file = await photo.download()
+    dog = get_dog_by_photo(file.name)
+    os.remove(file.name)
+    if dog:
+        text = (
+            f"🐶 *{dog['name']}*\n"
+            f"📍 Pen: {dog['pen'] or 'N/A'}\n"
+            f"📋 Status: {dog['status'] or 'N/A'}\n"
+            f"📝 {dog['description'] or 'No description yet'}"
+        )
+        if dog['photo_path'] and os.path.exists(dog['photo_path']):
+            with open(dog['photo_path'], 'rb') as p:
+                await bot.send_photo(
+                    chat_id=message.chat.id,
+                    photo=p,
+                    caption=text,
+                    parse_mode="Markdown",
+                )
+        else:
+            await message.reply(text, parse_mode="Markdown")
+    else:
+        await message.reply("❌ Dog not found in catalog.")
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
