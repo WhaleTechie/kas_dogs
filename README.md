@@ -35,8 +35,19 @@
 git clone https://github.com/your-username/kas_dogs.git
 cd kas_dogs
 ```
-2. **Create a `.env` file** with `BOT_TOKEN=<token>`
-3. **Run the bot**
+2. **Run the setup script** — this creates a `kasdogs310-env` virtual environment and installs requirements automatically
+
+```bash
+bash setup.sh
+```
+3. **Create a `.env` file** with `BOT_TOKEN=<token>`
+
+4. **Initialize the database**
+
+```bash
+python scripts/init_db.py
+```
+5. **Run the bot**
 
 ```bash
 python -m bot.main
@@ -53,3 +64,8 @@ Message @proseacode
 This project started in a dog shelter in Turkey where over 700 dogs live. The idea: make it easier for volunteers and adopters to identify and learn about dogs using just a photo.
 
 ❤️ Made with love, mud, and fur.
+---
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
