@@ -16,7 +16,7 @@ async def start(message: types.Message):
     keyboard.add(
         InlineKeyboardButton("🔍 Identify a Dog", callback_data="identify"),
         InlineKeyboardButton("🐶 View Catalog", callback_data="catalog"),
-        InlineKeyboardButton("☕ Support the Project", url="https://t.me/proseacode")
+        InlineKeyboardButton("☕ Support the Project", url="https://t.me/kasdogs/6")
     )
 
     await message.reply(
@@ -78,28 +78,43 @@ async def handle_identify_callback(callback_query: types.CallbackQuery):
 @dp.message_handler(content_types=['photo'])
 async def handle_photo(message: types.Message):
     photo = message.photo[-1]
-    file = await photo.download()
-    dog = get_dog_by_photo(file.name)
-    os.remove(file.name)
-    if dog:
-        text = (
-            f"🐶 *{dog['name']}*\n"
-            f"📍 Pen: {dog['pen'] or 'N/A'}\n"
-            f"📋 Status: {dog['status'] or 'N/A'}\n"
-            f"📝 {dog['description'] or 'No description yet'}"
-        )
-        if dog['photo_path'] and os.path.exists(dog['photo_path']):
-            with open(dog['photo_path'], 'rb') as p:
-                await bot.send_photo(
-                    chat_id=message.chat.id,
-                    photo=p,
-                    caption=text,
-                    parse_mode="Markdown",
-                )
-        else:
-            await message.reply(text, parse_mode="Markdown")
-    else:
-        await message.reply("❌ Dog not found in catalog.")
+    file_path = f"photos/{photo.file_id}.jpg"
+    await photo.download(destination_file=file_path)
 
+    dog = None
+    try:
+        dog = get_dog_by_photo(file_path)
+    except Exception as e:
+        print(f"⚠️ Error during recognition: {e}")
+    
+    try:
+        if dog:
+            text = (
+                f"🐶 *{dog['name']}*\n"
+                f"📍 Pen: {dog['pen'] or 'N/A'}\n"
+                f"📋 Status: {dog['status'] or 'N/A'}\n"
+                f"📝 {dog['description'] or 'No description yet'}"
+            )
+            if dog['photo_path'] and os.path.exists(dog['photo_path']):
+                with open(dog['photo_path'], 'rb') as p:
+                    await bot.send_photo(
+                        chat_id=message.chat.id,
+                        photo=p,
+                        caption=text,
+                        parse_mode="Markdown",
+                    )
+            else:
+                await message.reply(text, parse_mode="Markdown")
+        else:
+            await message.reply("❌ Dog not found in catalog or photo could not be processed.")
+    finally:
+        import gc
+        gc.collect()
+        try:
+            os.remove(file_path)
+        except Exception as e:
+            print(f"⚠️ Still couldn’t delete file: {e}")
+
+              
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)

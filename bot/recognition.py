@@ -4,7 +4,7 @@ from torchvision import models, transforms
 from PIL import Image
 import numpy as np
 import pickle
-
+from io import BytesIO
 MODEL = None
 TRANSFORM = transforms.Compose([
     transforms.Resize(256),
@@ -27,10 +27,18 @@ def _get_model():
 def extract_features(image_path: str) -> np.ndarray:
     """Load image and return a 512-dim embedding."""
     model = _get_model()
-    img = Image.open(image_path).convert("RGB")
-    tensor = TRANSFORM(img).unsqueeze(0)
+
+    # Open and fully load the image into memory, closing the file immediately
+    with Image.open(image_path) as img:
+        img_loaded = img.convert("RGB").copy()  # Fully loaded in memory
+
+    del img  # remove reference just in case
+
+    tensor = TRANSFORM(img_loaded).unsqueeze(0)
+
     with torch.no_grad():
         features = model(tensor)
+
     return features.numpy().flatten()
 
 
