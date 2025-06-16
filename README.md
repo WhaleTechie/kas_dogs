@@ -28,6 +28,7 @@
 ---
 
 ## 🔧 Setup (Dev)
+This project requires **Python 3.10**.
 
 1. **Clone the repo**
 

@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-echo "📦 Creating virtual environment..."
-python -m venv kasdogs310-env
+echo "📦 Creating virtual environment with Python 3.10..."
+python3.10 -m venv kasdogs310-env
 
 echo "✅ Activating virtual environment..."
 if [ -f "kasdogs310-env/bin/activate" ]; then
