@@ -24,3 +24,10 @@ echo "🎉 Setup complete!"
 echo "🐍 Python version: $(python --version)"
 echo "📦 Installed packages:"
 pip list
+if [ -f db/dogs.db ]; then
+    echo "🧠 Populating dog image embeddings..."
+    PYTHONPATH=. python bot/populate_embeddings.py
+    echo "✅ Embeddings populated!"
+else
+    echo "⚠️  dogs.db not found. Skipping embedding population."
+fi

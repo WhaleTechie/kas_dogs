@@ -43,12 +43,12 @@ def extract_features(image_path: str) -> np.ndarray:
 
 
 def get_dog_by_photo(image_path: str, threshold: float = 0.8):
-    """Return the closest dog from DB whose embedding similarity exceeds threshold."""
+    """Return the closest dog from DB whose any embedding similarity exceeds threshold."""
     query_emb = extract_features(image_path)
 
     conn = sqlite3.connect("db/dogs.db")
     cur = conn.cursor()
-    cur.execute("SELECT id, name, pen, status, description, photo_path, embedding FROM dogs")
+    cur.execute("SELECT id, name, pen, status, description, photo_path, embeddings FROM dogs")
     rows = cur.fetchall()
     conn.close()
 
@@ -57,23 +57,34 @@ def get_dog_by_photo(image_path: str, threshold: float = 0.8):
 
     best_score = -1.0
     best_dog = None
+
     for row in rows:
         dog_id, name, pen, status, desc, photo_path, emb_blob = row
         if emb_blob is None:
             continue
-        db_emb = np.array(pickle.loads(emb_blob))
-        score = np.dot(query_emb, db_emb) / (np.linalg.norm(query_emb) * np.linalg.norm(db_emb))
-        if score > best_score:
-            best_score = score
-            best_dog = {
-                "id": dog_id,
-                "name": name,
-                "pen": pen,
-                "status": status,
-                "description": desc,
-                "photo_path": photo_path,
-                "score": score,
-            }
+
+        try:
+            embedding_list = pickle.loads(emb_blob)
+        except Exception as e:
+            print(f"⚠️ Failed to load embeddings for dog {dog_id}: {e}")
+            continue
+
+        # Check similarity with all stored embeddings
+        for db_emb in embedding_list:
+            db_emb = np.array(db_emb)
+            score = np.dot(query_emb, db_emb) / (np.linalg.norm(query_emb) * np.linalg.norm(db_emb))
+            if score > best_score:
+                best_score = score
+                best_dog = {
+                    "id": dog_id,
+                    "name": name,
+                    "pen": pen,
+                    "status": status,
+                    "description": desc,
+                    "photo_path": photo_path,
+                    "score": score,
+                }
+
     if best_dog and best_dog["score"] >= threshold:
         return best_dog
     return None

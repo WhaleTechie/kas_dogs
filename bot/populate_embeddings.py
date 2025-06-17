@@ -1,36 +1,30 @@
-import sqlite3
 import os
 import pickle
+import numpy as np
+import sqlite3
 from bot.recognition import extract_features
 
-def populate_embeddings(db_path="db/dogs.db"):
-    conn = sqlite3.connect(db_path)
-    cur = conn.cursor()
+def compute_embeddings_for_dog(folder_path):
+    embeddings = []
+    for fname in os.listdir(folder_path):
+        if fname.lower().endswith(('.jpg', '.jpeg', '.png')):
+            img_path = os.path.join(folder_path, fname)
+            emb = extract_features(img_path)
+            embeddings.append(emb)
+    return embeddings
 
-    # Make sure embedding column exists
-    try:
-        cur.execute("ALTER TABLE dogs ADD COLUMN embedding BLOB")
-    except sqlite3.OperationalError:
-        print("✅ Column 'embedding' already exists.")
+conn = sqlite3.connect("db/dogs.db")
+cur = conn.cursor()
 
-    cur.execute("SELECT id, photo_path FROM dogs")
-    dogs = cur.fetchall()
+# assumes dog ID matches folder name (e.g., photos/1/, photos/2/)
+for dog_id in range(1, 100):  # adjust range as needed
+    folder = f"photos/{dog_id}"
+    if os.path.isdir(folder):
+        embs = compute_embeddings_for_dog(folder)
+        if embs:
+            blob = pickle.dumps(embs)
+            cur.execute("UPDATE dogs SET embeddings = ? WHERE id = ?", (blob, dog_id))
+            print(f"✅ Updated dog {dog_id} with {len(embs)} embeddings")
 
-    updated = 0
-    for dog_id, photo_path in dogs:
-        if not os.path.exists(photo_path):
-            print(f"⚠️ Photo not found for dog ID {dog_id}: {photo_path}")
-            continue
-
-        emb = extract_features(photo_path)
-        emb_blob = pickle.dumps(emb)
-
-        cur.execute("UPDATE dogs SET embedding = ? WHERE id = ?", (emb_blob, dog_id))
-        updated += 1
-
-    conn.commit()
-    conn.close()
-    print(f"🎉 Updated embeddings for {updated} dogs.")
-
-if __name__ == "__main__":
-    populate_embeddings()
+conn.commit()
+conn.close()
