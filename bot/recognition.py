@@ -1,10 +1,11 @@
+import os
 import sqlite3
 import torch
 from torchvision import models, transforms
 from PIL import Image
 import numpy as np
 import pickle
-from io import BytesIO
+
 MODEL = None
 TRANSFORM = transforms.Compose([
     transforms.Resize(256),
@@ -12,7 +13,6 @@ TRANSFORM = transforms.Compose([
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
-
 
 def _get_model():
     global MODEL
@@ -23,55 +23,44 @@ def _get_model():
         MODEL = model
     return MODEL
 
-
 def extract_features(image_path: str) -> np.ndarray:
-    """Load image and return a 512-dim embedding."""
     model = _get_model()
-
-    # Open and fully load the image into memory, closing the file immediately
     with Image.open(image_path) as img:
-        img_loaded = img.convert("RGB").copy()  # Fully loaded in memory
-
-    del img  # remove reference just in case
-
-    tensor = TRANSFORM(img_loaded).unsqueeze(0)
-
+        img = img.convert("RGB").copy()
+    tensor = TRANSFORM(img).unsqueeze(0)
     with torch.no_grad():
         features = model(tensor)
-
     return features.numpy().flatten()
 
-
 def get_dog_by_photo(image_path: str, threshold: float = 0.8):
-    """Return the closest dog from DB whose any embedding similarity exceeds threshold."""
-    query_emb = extract_features(image_path)
+    query_emb = extract_features(image_path).flatten()
 
     conn = sqlite3.connect("db/dogs.db")
     cur = conn.cursor()
-    cur.execute("SELECT id, name, pen, status, description, photo_path, embeddings FROM dogs")
+    cur.execute("SELECT id, name, pen, status, description, photo_folder, embeddings FROM dogs")
     rows = cur.fetchall()
     conn.close()
-
-    if not rows:
-        return None
 
     best_score = -1.0
     best_dog = None
 
     for row in rows:
-        dog_id, name, pen, status, desc, photo_path, emb_blob = row
+        dog_id, name, pen, status, desc, folder, emb_blob = row
         if emb_blob is None:
             continue
 
         try:
-            embedding_list = pickle.loads(emb_blob)
+            emb_list = pickle.loads(emb_blob)
         except Exception as e:
             print(f"⚠️ Failed to load embeddings for dog {dog_id}: {e}")
             continue
 
-        # Check similarity with all stored embeddings
-        for db_emb in embedding_list:
-            db_emb = np.array(db_emb)
+        for db_emb in emb_list:
+            db_emb = np.array(db_emb).flatten()
+            if db_emb.shape != (512,):
+                print(f"⚠️ Skipping mismatched embedding shape: {db_emb.shape}")
+                continue
+
             score = np.dot(query_emb, db_emb) / (np.linalg.norm(query_emb) * np.linalg.norm(db_emb))
             if score > best_score:
                 best_score = score
@@ -81,10 +70,10 @@ def get_dog_by_photo(image_path: str, threshold: float = 0.8):
                     "pen": pen,
                     "status": status,
                     "description": desc,
-                    "photo_path": photo_path,
+                    "photo_path": os.path.join(folder, os.listdir(folder)[0]) if folder else None,
                     "score": score,
                 }
 
-    if best_dog and best_dog["score"] >= threshold:
+    if best_dog and best_score >= threshold:
         return best_dog
     return None

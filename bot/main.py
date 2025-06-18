@@ -27,25 +27,37 @@ async def start(message: types.Message):
         parse_mode="Markdown"
     )
 
-# 🧩 Callback for catalog selection
+def get_categories():
+    conn = sqlite3.connect("db/dogs.db")
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT category FROM dogs WHERE category IS NOT NULL")
+    results = cur.fetchall()
+    conn.close()
+    return [r[0] for r in results]
+
 @dp.callback_query_handler(lambda c: c.data == 'catalog')
 async def handle_catalog_callback(callback_query: types.CallbackQuery):
-    categories = ['Shelter A', 'Shelter B', 'Street']
+    categories = get_categories()
+    if not categories:
+        await bot.send_message(callback_query.from_user.id, "📭 No categories available.")
+        await bot.answer_callback_query(callback_query.id)
+        return
+
     keyboard = InlineKeyboardMarkup(row_width=2)
     for cat in categories:
         keyboard.add(InlineKeyboardButton(cat, callback_data=f"category_{cat}"))
 
     await bot.send_message(
-        chat_id=callback_query.from_user.id,
-        text="📂 Choose a category:",
+        callback_query.from_user.id,
+        "📂 Choose a category to view dogs:",
         reply_markup=keyboard
     )
     await bot.answer_callback_query(callback_query.id)
 
-# 🐾 Show dogs from selected category
+# 🧩 Callback for catalog selection
 @dp.callback_query_handler(lambda c: c.data.startswith("category_"))
 async def show_catalog_by_category(callback_query: types.CallbackQuery):
-    category = callback_query.data.split("category_")[1]
+    category = callback_query.data[len("category_"):]  # safely extract category name
 
     conn = sqlite3.connect("db/dogs.db")
     cur = conn.cursor()
@@ -70,12 +82,13 @@ async def show_catalog_by_category(callback_query: types.CallbackQuery):
             f"📝 {desc or 'No description yet'}"
         )
         if folder and os.path.isdir(folder):
-            images = [f for f in os.listdir(folder) if f.lower().endswith(('.jpg', '.png'))]
+            images = [f for f in os.listdir(folder) if f.lower().endswith(('.jpg', '.jpeg','.png'))]
             if images:
                 photo_path = os.path.join(folder, images[0])
                 with open(photo_path, 'rb') as p:
                     await bot.send_photo(callback_query.from_user.id, photo=p, caption=text, parse_mode="Markdown")
                 continue
+
         await bot.send_message(callback_query.from_user.id, text, parse_mode="Markdown")
 
     await bot.answer_callback_query(callback_query.id)
@@ -83,7 +96,11 @@ async def show_catalog_by_category(callback_query: types.CallbackQuery):
 # ✉️ `/catalog` command = category selection
 @dp.message_handler(commands=['catalog'])
 async def catalog_command(message: types.Message):
-    categories = ['Shelter A', 'Shelter B', 'Street']
+    categories = get_categories()
+    if not categories:
+        await message.reply("📭 No categories available.")
+        return
+
     keyboard = InlineKeyboardMarkup(row_width=2)
     for cat in categories:
         keyboard.add(InlineKeyboardButton(cat, callback_data=f"category_{cat}"))
@@ -95,6 +112,7 @@ async def catalog_command(message: types.Message):
 async def handle_identify_callback(callback_query: types.CallbackQuery):
     await bot.send_message(callback_query.from_user.id, "📸 Please send a photo of the dog you want to identify.")
     await bot.answer_callback_query(callback_query.id)
+
 
 # 📷 Photo handler using embedding search
 @dp.message_handler(content_types=['photo'])
