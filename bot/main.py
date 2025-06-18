@@ -27,52 +27,74 @@ async def start(message: types.Message):
         parse_mode="Markdown"
     )
 
-# 📄 Catalog handler as a function
-async def show_catalog(message: types.Message):
+# 🧩 Callback for catalog selection
+@dp.callback_query_handler(lambda c: c.data == 'catalog')
+async def handle_catalog_callback(callback_query: types.CallbackQuery):
+    categories = ['Shelter A', 'Shelter B', 'Street']
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    for cat in categories:
+        keyboard.add(InlineKeyboardButton(cat, callback_data=f"category_{cat}"))
+
+    await bot.send_message(
+        chat_id=callback_query.from_user.id,
+        text="📂 Choose a category:",
+        reply_markup=keyboard
+    )
+    await bot.answer_callback_query(callback_query.id)
+
+# 🐾 Show dogs from selected category
+@dp.callback_query_handler(lambda c: c.data.startswith("category_"))
+async def show_catalog_by_category(callback_query: types.CallbackQuery):
+    category = callback_query.data.split("category_")[1]
+
     conn = sqlite3.connect("db/dogs.db")
     cur = conn.cursor()
     cur.execute(
-        "SELECT name, pen, status, description, photo_path FROM dogs"
+        "SELECT name, pen, status, description, photo_folder FROM dogs WHERE category = ?",
+        (category,)
     )
     rows = cur.fetchall()
-    for name, pen, status, desc, photo_path in rows:
+    conn.close()
+
+    if not rows:
+        await bot.send_message(callback_query.from_user.id, f"📭 No dogs found in *{category}*.", parse_mode="Markdown")
+        await bot.answer_callback_query(callback_query.id)
+        return
+
+    for name, pen, status, desc, folder in rows:
         text = (
             f"🐶 *{name}*\n"
+            f"📂 Category: {category}\n"
             f"📍 Pen: {pen or 'N/A'}\n"
             f"📋 Status: {status or 'N/A'}\n"
             f"📝 {desc or 'No description yet'}"
         )
+        if folder and os.path.isdir(folder):
+            images = [f for f in os.listdir(folder) if f.lower().endswith(('.jpg', '.png'))]
+            if images:
+                photo_path = os.path.join(folder, images[0])
+                with open(photo_path, 'rb') as p:
+                    await bot.send_photo(callback_query.from_user.id, photo=p, caption=text, parse_mode="Markdown")
+                continue
+        await bot.send_message(callback_query.from_user.id, text, parse_mode="Markdown")
 
-        if photo_path and os.path.exists(photo_path):
-            with open(photo_path, "rb") as photo:
-                await bot.send_photo(
-                    chat_id=message.chat.id,
-                    photo=photo,
-                    caption=text,
-                    parse_mode="Markdown",
-                )
-        else:
-            await message.reply(text, parse_mode="Markdown")
+    await bot.answer_callback_query(callback_query.id)
 
-    conn.close()
-
-# ✉️ `/catalog` text command
+# ✉️ `/catalog` command = category selection
 @dp.message_handler(commands=['catalog'])
 async def catalog_command(message: types.Message):
-    await show_catalog(message)
+    categories = ['Shelter A', 'Shelter B', 'Street']
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    for cat in categories:
+        keyboard.add(InlineKeyboardButton(cat, callback_data=f"category_{cat}"))
 
-# 🧩 Inline button callback handler
-@dp.callback_query_handler(lambda c: c.data == 'catalog')
-async def handle_catalog_callback(callback_query: types.CallbackQuery):
-    await show_catalog(callback_query.message)
-    await bot.answer_callback_query(callback_query.id)
+    await message.reply("📂 Choose a category to view dogs:", reply_markup=keyboard)
 
 # 🔍 Callback for identification button
 @dp.callback_query_handler(lambda c: c.data == 'identify')
 async def handle_identify_callback(callback_query: types.CallbackQuery):
     await bot.send_message(callback_query.from_user.id, "📸 Please send a photo of the dog you want to identify.")
     await bot.answer_callback_query(callback_query.id)
-
 
 # 📷 Photo handler using embedding search
 @dp.message_handler(content_types=['photo'])
@@ -86,7 +108,7 @@ async def handle_photo(message: types.Message):
         dog = get_dog_by_photo(file_path)
     except Exception as e:
         print(f"⚠️ Error during recognition: {e}")
-    
+
     try:
         if dog:
             text = (
@@ -115,6 +137,5 @@ async def handle_photo(message: types.Message):
         except Exception as e:
             print(f"⚠️ Still couldn’t delete file: {e}")
 
-              
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
