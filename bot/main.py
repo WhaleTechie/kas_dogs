@@ -82,7 +82,7 @@ async def handle_category(callback_query: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data.startswith("sector_"))
 async def handle_sector(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
-    sector = callback_query.data[len("sector_") :]
+    sector = callback_query.data[len("sector_"):]
 
     conn = sqlite3.connect("db/dogs.db")
     cur = conn.cursor()
@@ -90,6 +90,13 @@ async def handle_sector(callback_query: types.CallbackQuery):
     pens = [row[0] for row in cur.fetchall()]
     conn.close()
 
+    # 🟡 If there's only 1 or no pen, skip pen menu and show dogs directly
+    if not pens or len(pens) == 1:
+        pen = pens[0] if pens else None
+        await show_dogs_by_filters(callback_query, category="shelter", sector=sector, pen=pen)
+        return
+
+    # 🟢 Otherwise, show the pen menu
     keyboard = InlineKeyboardMarkup(row_width=2)
     for pen in pens:
         keyboard.add(InlineKeyboardButton(f"{pen}", callback_data=f"pen_{sector}_{pen}"))
