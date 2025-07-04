@@ -24,7 +24,7 @@ async def start(message: types.Message):
         InlineKeyboardButton("☕ Support the Project", url="https://t.me/kasdogs/6")
     )
     await message.reply(
-        escape_md("👋 Hello! I'm *KAS Dogs Bot* — your dog recognition assistant 🐾\n\n"
+        escape_md("👋 Hello! I'm KAS Dogs Bot — your dog recognition assistant 🐾\n\n"
                   "📸 Send a photo of a dog to get information,\n"
                   "or choose an option below:"),
         reply_markup=keyboard,
@@ -72,7 +72,7 @@ async def handle_category(callback_query: types.CallbackQuery):
 
         keyboard = InlineKeyboardMarkup(row_width=2)
         for sector in sectors:
-            keyboard.add(InlineKeyboardButton(f"Sector {sector}", callback_data=f"sector_{sector}"))
+            keyboard.add(InlineKeyboardButton(f"{sector}", callback_data=f"sector_{sector}"))
         keyboard.add(InlineKeyboardButton("🔙 Back to Catalog", callback_data="catalog"))
 
         await bot.send_message(callback_query.from_user.id, f"🏠 Select a sector in *{escape_md(category)}*:", reply_markup=keyboard, parse_mode="MarkdownV2")
@@ -92,7 +92,7 @@ async def handle_sector(callback_query: types.CallbackQuery):
 
     keyboard = InlineKeyboardMarkup(row_width=2)
     for pen in pens:
-        keyboard.add(InlineKeyboardButton(f"Pen {pen}", callback_data=f"pen_{sector}_{pen}"))
+        keyboard.add(InlineKeyboardButton(f"{pen}", callback_data=f"pen_{sector}_{pen}"))
     keyboard.add(InlineKeyboardButton("🔙 Back to Sectors", callback_data="category_shelter"))
 
     await bot.send_message(callback_query.from_user.id, f"📦 Select a pen in sector *{escape_md(sector)}*:", reply_markup=keyboard, parse_mode="MarkdownV2")
@@ -160,21 +160,41 @@ async def handle_photo(message: types.Message):
     photo = message.photo[-1]
     file_path = f"photos/{photo.file_id}.jpg"
     await photo.download(destination_file=file_path)
+
     dog = None
     try:
         dog = get_dog_by_photo(file_path)
     except Exception as e:
         print(f"⚠️ Error during recognition: {e}")
+
     try:
         keyboard = InlineKeyboardMarkup()
         keyboard.add(InlineKeyboardButton("🔙 Back to Main Menu", callback_data="start_over"))
+
         if dog:
+            category = (dog.get('category') or '').strip().lower()
+            pen = (dog.get('pen') or '').strip()
+            sector = (dog.get('sector') or '').strip()
+
+            if category == 'street':
+                location = "📍 Streets of Kaş"
+            else:
+                if pen and sector:
+                    location = f"📍 Pen {escape_md(pen)}, Sector {escape_md(sector)} in the Shelter"
+                elif pen:
+                    location = f"📍 Pen {escape_md(pen)}, in the Shelter"
+                elif sector:
+                    location = f"📍 Sector {escape_md(sector)} in the Shelter"
+                else:
+                    location = "📍 In the Shelter (location unknown)"
+
             text = (
                 f"🐶 *{escape_md(dog['name'])}*\n"
-                f"📍 Pen: {escape_md(dog['pen'] or 'N/A')}\n"
+                f"{location}\n"
                 f"📋 Status: {escape_md(dog['status'] or 'N/A')}\n"
                 f"📜 {escape_md(dog['description'] or 'No description yet')}"
             )
+
             if dog.get('photo_path') and os.path.exists(dog['photo_path']):
                 with open(dog['photo_path'], 'rb') as p:
                     await bot.send_photo(
@@ -188,6 +208,7 @@ async def handle_photo(message: types.Message):
                 await message.reply(text, reply_markup=keyboard, parse_mode="MarkdownV2")
         else:
             await message.reply("❌ Dog not found in catalog or photo could not be processed.", reply_markup=keyboard)
+
     finally:
         gc.collect()
         try:
