@@ -19,6 +19,7 @@ def escape_md(text):
 def clean_text(text):
     return text.encode("utf-16", "surrogatepass").decode("utf-16", "ignore")
 
+recognized_dog_photos = {}
 user_dog_profiles = {}
 user_dog_index = {}
 
@@ -229,11 +230,10 @@ async def handle_identify_callback(callback_query: types.CallbackQuery):
 async def handle_photo(message: types.Message):
     wait_msg = await message.reply("⏳ Analyzing the photo...")
 
-    # Get highest resolution photo
     photo = message.photo[-1]
     temp_dir = tempfile.gettempdir()
     temp_path = os.path.join(temp_dir, f"dog_{uuid.uuid4().hex}.jpg")
-    
+
     try:
         await photo.download(destination_file=temp_path)
         dog = get_dog_by_photo(temp_path)
@@ -247,15 +247,30 @@ async def handle_photo(message: types.Message):
                 f"📜 {escape_md(dog['description'] or 'No description yet')}"
             )
 
+            keyboard = InlineKeyboardMarkup()
             if dog["photo_path"] and os.path.exists(dog["photo_path"]):
+                folder = os.path.dirname(dog["photo_path"])
+                photos = [os.path.join(folder, f) for f in os.listdir(folder) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+                recognized_dog_photos[message.from_user.id] = photos
+                if len(photos) > 1:
+                    keyboard.add(InlineKeyboardButton("📷 View More Photos", callback_data="more_rec_photos"))
+
                 with open(dog["photo_path"], "rb") as p:
+                    keyboard.add(InlineKeyboardButton("🔙 Back to Menu", callback_data="start_over"))
                     await message.reply_photo(
                         photo=p,
                         caption=clean_text(text),
-                        parse_mode="MarkdownV2"
+                        parse_mode="MarkdownV2",
+                        reply_markup=keyboard
                     )
             else:
-                await message.reply(clean_text(text), parse_mode="MarkdownV2")
+                await message.reply(
+                    clean_text(text),
+                    parse_mode="MarkdownV2",
+                    reply_markup=InlineKeyboardMarkup().add(
+                        InlineKeyboardButton("🔙 Back to Menu", callback_data="start_over")
+                    )
+                )
         else:
             await message.reply("🐾 Sorry, I couldn't recognize this dog.")
     except Exception as e:
@@ -266,6 +281,20 @@ async def handle_photo(message: types.Message):
         if os.path.exists(temp_path):
             os.remove(temp_path)
         gc.collect()
+        
+@dp.callback_query_handler(lambda c: c.data == "more_rec_photos")
+async def handle_more_rec_photos(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    wait_msg = await bot.send_message(callback_query.from_user.id, "⏳ Please wait...")
+
+    photos = recognized_dog_photos.get(callback_query.from_user.id)
+    if photos:
+        media = [InputMediaPhoto(types.InputFile(p)) for p in photos[:10]]
+        await bot.send_media_group(callback_query.from_user.id, media=media)
+
+    await wait_msg.delete()
+    keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Back to Menu", callback_data="start_over"))
+    await bot.send_message(callback_query.from_user.id, "✅ More photos shown.", reply_markup=keyboard)
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
