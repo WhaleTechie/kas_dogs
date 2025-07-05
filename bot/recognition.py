@@ -1,3 +1,4 @@
+### Updated recognition.py
 import os
 import sqlite3
 import torch
@@ -68,11 +69,14 @@ def get_dog_by_photo(image_path: str, threshold: float = 0.8):
             if score > best_score:
                 best_score = score
                 first_photo = None
+                photo_list = []
                 if folder and os.path.isdir(folder):
                     try:
                         photos = [f for f in os.listdir(folder) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+                        photos.sort()
                         if photos:
                             first_photo = os.path.join(folder, photos[0])
+                            photo_list = [os.path.join(folder, p) for p in photos]
                     except Exception as e:
                         print(f"⚠️ Error accessing photo folder for dog {dog_id}: {e}")
 
@@ -85,6 +89,7 @@ def get_dog_by_photo(image_path: str, threshold: float = 0.8):
                     "status": status,
                     "description": desc,
                     "photo_path": first_photo,
+                    "photo_list": photo_list,
                     "score": score,
                 }
 

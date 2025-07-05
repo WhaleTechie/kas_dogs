@@ -2,6 +2,8 @@ import os
 import gc
 import re
 import sqlite3
+import uuid
+import tempfile
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from aiogram.utils import executor
@@ -222,6 +224,48 @@ async def return_to_main(callback_query: types.CallbackQuery):
 async def handle_identify_callback(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(callback_query.from_user.id, "📸 Please send a photo of the dog you want to identify.")
+
+@dp.message_handler(content_types=types.ContentType.PHOTO)
+async def handle_photo(message: types.Message):
+    wait_msg = await message.reply("⏳ Analyzing the photo...")
+
+    # Get highest resolution photo
+    photo = message.photo[-1]
+    temp_dir = tempfile.gettempdir()
+    temp_path = os.path.join(temp_dir, f"dog_{uuid.uuid4().hex}.jpg")
+    
+    try:
+        await photo.download(destination_file=temp_path)
+        dog = get_dog_by_photo(temp_path)
+
+        if dog:
+            text = (
+                f"🐶 *{escape_md(dog['name'])}*\n"
+                f"📂 {escape_md(dog['category'])}\n"
+                f"📍 {escape_md(dog['pen'] or dog['sector'] or 'N/A')}\n"
+                f"📋 Status: {escape_md(dog['status'] or 'N/A')}\n"
+                f"📜 {escape_md(dog['description'] or 'No description yet')}"
+            )
+
+            if dog["photo_path"] and os.path.exists(dog["photo_path"]):
+                with open(dog["photo_path"], "rb") as p:
+                    await message.reply_photo(
+                        photo=p,
+                        caption=clean_text(text),
+                        parse_mode="MarkdownV2"
+                    )
+            else:
+                await message.reply(clean_text(text), parse_mode="MarkdownV2")
+        else:
+            await message.reply("🐾 Sorry, I couldn't recognize this dog.")
+    except Exception as e:
+        await message.reply("❌ Error processing the photo.")
+        print(f"Recognition error: {e}")
+    finally:
+        await wait_msg.delete()
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        gc.collect()
 
 if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
