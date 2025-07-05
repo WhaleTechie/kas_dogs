@@ -52,6 +52,7 @@ async def handle_catalog_callback(callback_query: types.CallbackQuery):
     keyboard = InlineKeyboardMarkup(row_width=2)
     for cat in categories:
         keyboard.add(InlineKeyboardButton(cat, callback_data=f"category_{cat}"))
+    keyboard.add(InlineKeyboardButton("🔙 Back to Menu", callback_data="start_over"))
     await bot.send_message(
         callback_query.from_user.id,
         "📂 Choose a category to view dogs:",
@@ -75,14 +76,14 @@ async def handle_category(callback_query: types.CallbackQuery):
             keyboard.add(InlineKeyboardButton(f"{sector}", callback_data=f"sector_{sector}"))
         keyboard.add(InlineKeyboardButton("🔙 Back to Catalog", callback_data="catalog"))
 
-        await bot.send_message(callback_query.from_user.id, f"🏠 Select a sector in *{escape_md(category)}*:", reply_markup=keyboard, parse_mode="MarkdownV2")
+        await bot.send_message(callback_query.from_user.id, escape_md(f"🏠 Select a sector in {category}:") , reply_markup=keyboard, parse_mode="MarkdownV2")
     else:
         await show_dogs_by_filters(callback_query, category=category)
 
 @dp.callback_query_handler(lambda c: c.data.startswith("sector_"))
 async def handle_sector(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
-    sector = callback_query.data[len("sector_"):]
+    sector = callback_query.data[len("sector_" ):]
 
     conn = sqlite3.connect("db/dogs.db")
     cur = conn.cursor()
@@ -90,19 +91,17 @@ async def handle_sector(callback_query: types.CallbackQuery):
     pens = [row[0] for row in cur.fetchall()]
     conn.close()
 
-    # 🟡 If there's only 1 or no pen, skip pen menu and show dogs directly
     if not pens or len(pens) == 1:
         pen = pens[0] if pens else None
         await show_dogs_by_filters(callback_query, category="shelter", sector=sector, pen=pen)
         return
 
-    # 🟢 Otherwise, show the pen menu
     keyboard = InlineKeyboardMarkup(row_width=2)
     for pen in pens:
         keyboard.add(InlineKeyboardButton(f"{pen}", callback_data=f"pen_{sector}_{pen}"))
     keyboard.add(InlineKeyboardButton("🔙 Back to Sectors", callback_data="category_shelter"))
 
-    await bot.send_message(callback_query.from_user.id, f"📦 Select a pen in sector *{escape_md(sector)}*:", reply_markup=keyboard, parse_mode="MarkdownV2")
+    await bot.send_message(callback_query.from_user.id, escape_md(f"📦 Select a pen in sector {sector}:") , reply_markup=keyboard, parse_mode="MarkdownV2")
 
 @dp.callback_query_handler(lambda c: c.data.startswith("pen_"))
 async def handle_pen(callback_query: types.CallbackQuery):
@@ -130,12 +129,12 @@ async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=N
         return
 
     for name, pen, status, desc, folder in rows:
-        text = (
-            f"🐶 *{escape_md(name)}*\n"
-            f"📂 Category: {escape_md(category)}\n"
-            f"📍 Pen: {escape_md(pen or 'N/A')}\n"
-            f"📋 Status: {escape_md(status or 'N/A')}\n"
-            f"📜 {escape_md(desc or 'No description yet')}"
+        text = escape_md(
+            f"🐶 {name}\n"
+            f"📂 Category: {category}\n"
+            f"📍 Pen: {pen or 'N/A'}\n"
+            f"📋 Status: {status or 'N/A'}\n"
+            f"📜 {desc or 'No description yet'}"
         )
         if folder and os.path.isdir(folder):
             images = [f for f in os.listdir(folder) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
@@ -160,6 +159,7 @@ async def catalog_command(message: types.Message):
     keyboard = InlineKeyboardMarkup(row_width=2)
     for cat in categories:
         keyboard.add(InlineKeyboardButton(cat, callback_data=f"category_{cat}"))
+    keyboard.add(InlineKeyboardButton("🔙 Back to Menu", callback_data="start_over"))
     await message.reply("📂 Choose a category to view dogs:", reply_markup=keyboard)
 
 @dp.message_handler(content_types=['photo'])
@@ -184,23 +184,19 @@ async def handle_photo(message: types.Message):
             sector = (dog.get('sector') or '').strip()
 
             if category == 'street':
-                location = "📍 Streets of Kaş"
+                location = escape_md("📍 Streets of Kaş")
             else:
                 if pen and sector:
-                    location = f"📍 Pen {escape_md(pen)}, Sector {escape_md(sector)} in the Shelter"
+                    location = escape_md(f"📍 Pen {pen}, Sector {sector} in the Shelter")
                 elif pen:
-                    location = f"📍 Pen {escape_md(pen)}, in the Shelter"
+                    location = escape_md(f"📍 Pen {pen}, in the Shelter")
                 elif sector:
-                    location = f"📍 Sector {escape_md(sector)} in the Shelter"
+                    location = escape_md(f"📍 Sector {sector} in the Shelter")
                 else:
-                    location = "📍 In the Shelter (location unknown)"
+                    location = escape_md("📍 In the Shelter (location unknown)")
 
-            text = (
-                f"🐶 *{escape_md(dog['name'])}*\n"
-                f"{location}\n"
-                f"📋 Status: {escape_md(dog['status'] or 'N/A')}\n"
-                f"📜 {escape_md(dog['description'] or 'No description yet')}"
-            )
+            text = escape_md(f"🐶 {dog['name']}\n") + location + "\n" + \
+                   escape_md(f"📋 Status: {dog['status'] or 'N/A'}\n📜 {dog['description'] or 'No description yet'}")
 
             if dog.get('photo_path') and os.path.exists(dog['photo_path']):
                 with open(dog['photo_path'], 'rb') as p:
