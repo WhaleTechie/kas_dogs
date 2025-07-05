@@ -3,7 +3,7 @@ import gc
 import re
 import sqlite3
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from aiogram.utils import executor
 from kas_config import BOT_TOKEN
 from bot.recognition import get_dog_by_photo
@@ -14,7 +14,12 @@ dp = Dispatcher(bot)
 def escape_md(text):
     return re.sub(r'([_\*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
 
-# --- MAIN MENU ---
+def clean_text(text):
+    return text.encode("utf-16", "surrogatepass").decode("utf-16", "ignore")
+
+user_dog_profiles = {}
+dog_photos = {}
+
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     keyboard = InlineKeyboardMarkup(row_width=1)
@@ -24,14 +29,13 @@ async def start(message: types.Message):
         InlineKeyboardButton("☕ Support the Project", url="https://t.me/kasdogs/6")
     )
     await message.reply(
-        escape_md("👋 Hello! I'm KAS Dogs Bot — your dog recognition assistant 🐾\n\n"
-                  "📸 Send a photo of a dog to get information,\n"
-                  "or choose an option below:"),
+        clean_text(escape_md("👋 Hello! I'm KAS Dogs Bot — your dog recognition assistant 🐾\n\n"
+                             "📸 Send a photo of a dog to get information,\n"
+                             "or choose an option below:")),
         reply_markup=keyboard,
         parse_mode="MarkdownV2"
     )
 
-# --- GET CATEGORIES ---
 def get_categories():
     conn = sqlite3.connect("db/dogs.db")
     cur = conn.cursor()
@@ -40,7 +44,6 @@ def get_categories():
     conn.close()
     return [r[0] for r in results]
 
-# --- VIEW CATALOG ---
 @dp.callback_query_handler(lambda c: c.data == 'catalog')
 async def handle_catalog_callback(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
@@ -52,7 +55,7 @@ async def handle_catalog_callback(callback_query: types.CallbackQuery):
     keyboard = InlineKeyboardMarkup(row_width=2)
     for cat in categories:
         keyboard.add(InlineKeyboardButton(cat, callback_data=f"category_{cat}"))
-    keyboard.add(InlineKeyboardButton("🔙 Back to Menu", callback_data="start_over"))
+    keyboard.add(InlineKeyboardButton("🔙 Main Menu", callback_data="start_over"))
     await bot.send_message(
         callback_query.from_user.id,
         "📂 Choose a category to view dogs:",
@@ -76,14 +79,14 @@ async def handle_category(callback_query: types.CallbackQuery):
             keyboard.add(InlineKeyboardButton(f"{sector}", callback_data=f"sector_{sector}"))
         keyboard.add(InlineKeyboardButton("🔙 Back to Catalog", callback_data="catalog"))
 
-        await bot.send_message(callback_query.from_user.id, escape_md(f"🏠 Select a sector in {category}:") , reply_markup=keyboard, parse_mode="MarkdownV2")
+        await bot.send_message(callback_query.from_user.id, clean_text(f"🏠 Select a sector in *{escape_md(category)}*:"), reply_markup=keyboard, parse_mode="MarkdownV2")
     else:
         await show_dogs_by_filters(callback_query, category=category)
 
 @dp.callback_query_handler(lambda c: c.data.startswith("sector_"))
 async def handle_sector(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
-    sector = callback_query.data[len("sector_" ):]
+    sector = callback_query.data[len("sector_") :]
 
     conn = sqlite3.connect("db/dogs.db")
     cur = conn.cursor()
@@ -101,7 +104,7 @@ async def handle_sector(callback_query: types.CallbackQuery):
         keyboard.add(InlineKeyboardButton(f"{pen}", callback_data=f"pen_{sector}_{pen}"))
     keyboard.add(InlineKeyboardButton("🔙 Back to Sectors", callback_data="category_shelter"))
 
-    await bot.send_message(callback_query.from_user.id, escape_md(f"📦 Select a pen in sector {sector}:") , reply_markup=keyboard, parse_mode="MarkdownV2")
+    await bot.send_message(callback_query.from_user.id, clean_text(f"📦 Select a pen in sector *{escape_md(sector)}*:"), reply_markup=keyboard, parse_mode="MarkdownV2")
 
 @dp.callback_query_handler(lambda c: c.data.startswith("pen_"))
 async def handle_pen(callback_query: types.CallbackQuery):
@@ -110,6 +113,8 @@ async def handle_pen(callback_query: types.CallbackQuery):
     await show_dogs_by_filters(callback_query, category="shelter", sector=sector, pen=pen)
 
 async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=None):
+    wait_msg = await bot.send_message(callback_query.from_user.id, "⏳ Please wait...")
+
     conn = sqlite3.connect("db/dogs.db")
     cur = conn.cursor()
     query = "SELECT name, pen, status, description, photo_folder FROM dogs WHERE category = ?"
@@ -125,99 +130,87 @@ async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=N
     conn.close()
 
     if not rows:
+        await bot.delete_message(callback_query.from_user.id, wait_msg.message_id)
         await bot.send_message(callback_query.from_user.id, "📕 No dogs found.")
         return
 
-    for name, pen, status, desc, folder in rows:
-        text = escape_md(
-            f"🐶 {name}\n"
-            f"📂 Category: {category}\n"
-            f"📍 Pen: {pen or 'N/A'}\n"
-            f"📋 Status: {status or 'N/A'}\n"
-            f"📜 {desc or 'No description yet'}"
-        )
+    media_batches = []
+    media_group = []
+    profiles = []
+
+    for idx, (name, pen, status, desc, folder) in enumerate(rows):
+        photo_path = None
+        photo_list = []
         if folder and os.path.isdir(folder):
             images = [f for f in os.listdir(folder) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+            photo_list = [os.path.join(folder, img) for img in images]
             if images:
                 photo_path = os.path.join(folder, images[0])
-                with open(photo_path, 'rb') as p:
-                    await bot.send_photo(callback_query.from_user.id, photo=p, caption=text, parse_mode="MarkdownV2")
-                continue
-        await bot.send_message(callback_query.from_user.id, text, parse_mode="MarkdownV2")
+                media_group.append(InputMediaPhoto(types.InputFile(photo_path)))
 
-    keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Main Menu", callback_data="start_over"))
-    await bot.send_message(callback_query.from_user.id, "📋 Done showing dogs.", reply_markup=keyboard)
+        text = (
+            f"🐶 *{escape_md(name)}*\n"
+            f"📂 {escape_md(category)}\n"
+            f"📍 {escape_md(pen or 'N/A')}\n"
+            f"📋 Status: {escape_md(status or 'N/A')}\n"
+            f"📜 {escape_md(desc or 'No description yet')}"
+        )
+        profiles.append((text, photo_path, photo_list))
+
+        if (idx + 1) % 10 == 0:
+            media_batches.append(media_group)
+            media_group = []
+
+    if media_group:
+        media_batches.append(media_group)
+
+    for batch in media_batches:
+        await bot.send_media_group(callback_query.from_user.id, media=batch)
+
+    user_dog_profiles[callback_query.from_user.id] = profiles
+
+    keyboard = InlineKeyboardMarkup()
+    keyboard.add(InlineKeyboardButton("📋 View Dog Profiles", callback_data="show_profiles_dogs"))
+    keyboard.add(InlineKeyboardButton("🔙 Main Menu", callback_data="start_over"))
+    await bot.send_message(callback_query.from_user.id, "✅ Dogs shown. What would you like next?", reply_markup=keyboard)
+
+    await bot.delete_message(callback_query.from_user.id, wait_msg.message_id)
+
+@dp.callback_query_handler(lambda c: c.data == "show_profiles_dogs")
+async def show_profiles(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    user_id = callback_query.from_user.id
+    profiles = user_dog_profiles.get(user_id, [])
+
+    for idx, (text, photo, photo_list) in enumerate(profiles):
+        keyboard = InlineKeyboardMarkup()
+        if photo_list:
+            keyboard.add(InlineKeyboardButton("📷 More Photos", callback_data=f"more_photos_{idx}"))
+        keyboard.add(InlineKeyboardButton("🔙 Back to Menu", callback_data="start_over"))
+
+        if photo and os.path.exists(photo):
+            with open(photo, 'rb') as p:
+                await bot.send_photo(callback_query.from_user.id, photo=p, caption=clean_text(text), parse_mode="MarkdownV2", reply_markup=keyboard)
+        else:
+            await bot.send_message(callback_query.from_user.id, clean_text(text), parse_mode="MarkdownV2", reply_markup=keyboard)
+
+@dp.callback_query_handler(lambda c: c.data.startswith("more_photos_"))
+async def show_more_photos(callback_query: types.CallbackQuery):
+    await bot.answer_callback_query(callback_query.id)
+    user_id = callback_query.from_user.id
+    index = int(callback_query.data.split("_")[-1])
+    profiles = user_dog_profiles.get(user_id, [])
+
+    if index < len(profiles):
+        _, _, photo_list = profiles[index]
+        if photo_list:
+            media = [InputMediaPhoto(types.InputFile(path)) for path in photo_list[:10]]
+            await bot.send_media_group(callback_query.from_user.id, media=media)
 
 @dp.callback_query_handler(lambda c: c.data == "start_over")
 async def return_to_main(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     await start(callback_query.message)
-
-@dp.message_handler(commands=['catalog'])
-async def catalog_command(message: types.Message):
-    categories = get_categories()
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    for cat in categories:
-        keyboard.add(InlineKeyboardButton(cat, callback_data=f"category_{cat}"))
-    keyboard.add(InlineKeyboardButton("🔙 Back to Menu", callback_data="start_over"))
-    await message.reply("📂 Choose a category to view dogs:", reply_markup=keyboard)
-
-@dp.message_handler(content_types=['photo'])
-async def handle_photo(message: types.Message):
-    photo = message.photo[-1]
-    file_path = f"photos/{photo.file_id}.jpg"
-    await photo.download(destination_file=file_path)
-
-    dog = None
-    try:
-        dog = get_dog_by_photo(file_path)
-    except Exception as e:
-        print(f"⚠️ Error during recognition: {e}")
-
-    try:
-        keyboard = InlineKeyboardMarkup()
-        keyboard.add(InlineKeyboardButton("🔙 Back to Main Menu", callback_data="start_over"))
-
-        if dog:
-            category = (dog.get('category') or '').strip().lower()
-            pen = (dog.get('pen') or '').strip()
-            sector = (dog.get('sector') or '').strip()
-
-            if category == 'street':
-                location = escape_md("📍 Streets of Kaş")
-            else:
-                if pen and sector:
-                    location = escape_md(f"📍 Pen {pen}, Sector {sector} in the Shelter")
-                elif pen:
-                    location = escape_md(f"📍 Pen {pen}, in the Shelter")
-                elif sector:
-                    location = escape_md(f"📍 Sector {sector} in the Shelter")
-                else:
-                    location = escape_md("📍 In the Shelter (location unknown)")
-
-            text = escape_md(f"🐶 {dog['name']}\n") + location + "\n" + \
-                   escape_md(f"📋 Status: {dog['status'] or 'N/A'}\n📜 {dog['description'] or 'No description yet'}")
-
-            if dog.get('photo_path') and os.path.exists(dog['photo_path']):
-                with open(dog['photo_path'], 'rb') as p:
-                    await bot.send_photo(
-                        chat_id=message.chat.id,
-                        photo=p,
-                        caption=text,
-                        reply_markup=keyboard,
-                        parse_mode="MarkdownV2",
-                    )
-            else:
-                await message.reply(text, reply_markup=keyboard, parse_mode="MarkdownV2")
-        else:
-            await message.reply("❌ Dog not found in catalog or photo could not be processed.", reply_markup=keyboard)
-
-    finally:
-        gc.collect()
-        try:
-            os.remove(file_path)
-        except Exception as e:
-            print(f"⚠️ Still couldn’t delete file: {e}")
 
 @dp.callback_query_handler(lambda c: c.data == 'identify')
 async def handle_identify_callback(callback_query: types.CallbackQuery):

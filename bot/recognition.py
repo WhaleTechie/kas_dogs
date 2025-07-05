@@ -37,7 +37,10 @@ def get_dog_by_photo(image_path: str, threshold: float = 0.8):
 
     conn = sqlite3.connect("db/dogs.db")
     cur = conn.cursor()
-    cur.execute("SELECT id, name, pen, status, description, photo_folder, embeddings FROM dogs")
+    cur.execute("""
+        SELECT id, name, pen, status, description, photo_folder, embeddings, category, sector 
+        FROM dogs
+    """)
     rows = cur.fetchall()
     conn.close()
 
@@ -45,7 +48,7 @@ def get_dog_by_photo(image_path: str, threshold: float = 0.8):
     best_dog = None
 
     for row in rows:
-        dog_id, name, pen, status, desc, folder, emb_blob = row
+        dog_id, name, pen, status, desc, folder, emb_blob, category, sector = row
         if emb_blob is None:
             continue
 
@@ -64,13 +67,24 @@ def get_dog_by_photo(image_path: str, threshold: float = 0.8):
             score = np.dot(query_emb, db_emb) / (np.linalg.norm(query_emb) * np.linalg.norm(db_emb))
             if score > best_score:
                 best_score = score
+                first_photo = None
+                if folder and os.path.isdir(folder):
+                    try:
+                        photos = [f for f in os.listdir(folder) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
+                        if photos:
+                            first_photo = os.path.join(folder, photos[0])
+                    except Exception as e:
+                        print(f"⚠️ Error accessing photo folder for dog {dog_id}: {e}")
+
                 best_dog = {
                     "id": dog_id,
                     "name": name,
                     "pen": pen,
+                    "sector": sector,
+                    "category": category,
                     "status": status,
                     "description": desc,
-                    "photo_path": os.path.join(folder, os.listdir(folder)[0]) if folder else None,
+                    "photo_path": first_photo,
                     "score": score,
                 }
 
