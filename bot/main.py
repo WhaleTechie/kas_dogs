@@ -9,6 +9,7 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMedia
 from aiogram.utils import executor
 from kas_config import BOT_TOKEN
 from bot.recognition import get_dog_by_photo
+from supabase import create_client, Client
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
@@ -22,6 +23,11 @@ def clean_text(text):
 recognized_dog_photos = {}
 user_dog_profiles = {}
 user_dog_index = {}
+
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
@@ -40,12 +46,14 @@ async def start(message: types.Message):
     )
 
 def get_categories():
-    conn = sqlite3.connect("db/dogs.db")
-    cur = conn.cursor()
-    cur.execute("SELECT DISTINCT category FROM dogs WHERE category IS NOT NULL")
-    results = cur.fetchall()
-    conn.close()
-    return [r[0] for r in results]
+    try:
+        response = supabase.table("dogs").select("category").neq("category", None).execute()
+        rows = response.data
+        categories = list({row["category"] for row in rows if row["category"]})
+        return categories
+    except Exception as e:
+        print(f"Error fetching categories: {e}")
+        return []
 
 @dp.callback_query_handler(lambda c: c.data == 'catalog')
 async def handle_catalog_callback(callback_query: types.CallbackQuery):
@@ -71,18 +79,25 @@ async def handle_category(callback_query: types.CallbackQuery):
     category = callback_query.data[len("category_") :]
 
     if category.lower() == "shelter":
-        conn = sqlite3.connect("db/dogs.db")
-        cur = conn.cursor()
-        cur.execute("SELECT DISTINCT sector FROM dogs WHERE category = ? AND sector IS NOT NULL", (category,))
-        sectors = [row[0] for row in cur.fetchall()]
-        conn.close()
+        response = supabase.table("dogs") \
+            .select("sector") \
+            .eq("category", category) \
+            .neq("sector", None) \
+            .execute()
+
+        sectors = list({row["sector"] for row in response.data}) if response.data else []
 
         keyboard = InlineKeyboardMarkup(row_width=2)
         for sector in sectors:
             keyboard.add(InlineKeyboardButton(f"{sector}", callback_data=f"sector_{sector}"))
         keyboard.add(InlineKeyboardButton("🔙 Back to Catalog", callback_data="catalog"))
 
-        await bot.send_message(callback_query.from_user.id, clean_text(f"🏠 Select a sector in *{escape_md(category)}*:"), reply_markup=keyboard, parse_mode="MarkdownV2")
+        await bot.send_message(
+            callback_query.from_user.id,
+            clean_text(f"🏠 Select a sector in *{escape_md(category)}*:"), 
+            reply_markup=keyboard, 
+            parse_mode="MarkdownV2"
+        )
     else:
         await show_dogs_by_filters(callback_query, category=category)
 
@@ -91,11 +106,14 @@ async def handle_sector(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     sector = callback_query.data[len("sector_") :]
 
-    conn = sqlite3.connect("db/dogs.db")
-    cur = conn.cursor()
-    cur.execute("SELECT DISTINCT pen FROM dogs WHERE category = 'shelter' AND sector = ? AND pen IS NOT NULL", (sector,))
-    pens = [row[0] for row in cur.fetchall()]
-    conn.close()
+    response = supabase.table("dogs") \
+        .select("pen") \
+        .eq("category", "shelter") \
+        .eq("sector", sector) \
+        .neq("pen", None) \
+        .execute()
+
+    pens = list({row["pen"] for row in response.data}) if response.data else []
 
     if not pens or len(pens) == 1:
         pen = pens[0] if pens else None
@@ -107,7 +125,12 @@ async def handle_sector(callback_query: types.CallbackQuery):
         keyboard.add(InlineKeyboardButton(f"{pen}", callback_data=f"pen_{sector}_{pen}"))
     keyboard.add(InlineKeyboardButton("🔙 Back to Sectors", callback_data="category_shelter"))
 
-    await bot.send_message(callback_query.from_user.id, clean_text(f"📦 Select a pen in sector *{escape_md(sector)}*:"), reply_markup=keyboard, parse_mode="MarkdownV2")
+    await bot.send_message(
+        callback_query.from_user.id,
+        clean_text(f"📦 Select a pen in sector *{escape_md(sector)}*:"),
+        reply_markup=keyboard,
+        parse_mode="MarkdownV2"
+    )
 
 @dp.callback_query_handler(lambda c: c.data.startswith("pen_"))
 async def handle_pen(callback_query: types.CallbackQuery):
@@ -123,9 +146,10 @@ async def show_next_profile(callback_query: types.CallbackQuery):
     profiles = user_dog_profiles.get(user_id, [])
 
     if idx < len(profiles):
-        text, photo_path, photo_list, location = profiles[idx]
+        text, dog_id, photo_filenames, location = profiles[idx]  # dog_id matches your DB id
+
         keyboard = InlineKeyboardMarkup()
-        if photo_list:
+        if photo_filenames and len(photo_filenames) > 1:
             keyboard.add(InlineKeyboardButton("📷 More Photos", callback_data=f"more_photos_{idx}"))
 
         remaining = len(profiles) - idx - 1
@@ -134,11 +158,34 @@ async def show_next_profile(callback_query: types.CallbackQuery):
 
         keyboard.add(InlineKeyboardButton("🔙 Back to Menu", callback_data="start_over"))
 
-        if photo_path and os.path.exists(photo_path):
-            with open(photo_path, 'rb') as p:
-                await bot.send_photo(callback_query.from_user.id, photo=p, caption=clean_text(text), parse_mode="MarkdownV2", reply_markup=keyboard)
-        else:
-            await bot.send_message(callback_query.from_user.id, clean_text(text), parse_mode="MarkdownV2", reply_markup=keyboard)
+        if photo_filenames:
+            first_filename = photo_filenames[0]
+            result = supabase.storage.from_('kas.dogs').get_public_url(f"{dog_id}/{first_filename}")
+            first_photo_url = result.get("publicURL") if isinstance(result, dict) else result
+
+            if first_photo_url and first_photo_url.lower().endswith(('.jpg', '.jpeg', '.png')):
+                await bot.send_photo(
+                    callback_query.from_user.id,
+                    photo=first_photo_url,
+                    caption=clean_text(text),
+                    parse_mode="MarkdownV2",
+                    reply_markup=keyboard
+                )
+            else:
+                print(f"[WARNING] Invalid image URL for dog {dog_id}: {first_photo_url}")
+                await bot.send_message(
+                    callback_query.from_user.id,
+                    clean_text(text),
+                    parse_mode="MarkdownV2",
+                    reply_markup=keyboard
+                )
+    else:
+        await bot.send_message(
+            callback_query.from_user.id,
+            clean_text(text),
+            parse_mode="MarkdownV2",
+            reply_markup=keyboard
+        )
 
 @dp.callback_query_handler(lambda c: c.data.startswith("more_photos_"))
 async def show_more_photos(callback_query: types.CallbackQuery):
@@ -162,50 +209,78 @@ async def show_more_photos(callback_query: types.CallbackQuery):
 async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=None):
     wait_msg = await bot.send_message(callback_query.from_user.id, "⏳ Please wait...")
 
-    conn = sqlite3.connect("db/dogs.db")
-    cur = conn.cursor()
-    query = "SELECT name, pen, sector, status, description, photo_folder FROM dogs WHERE category = ?"
-    params = [category]
+    # Query Supabase DB instead of SQLite
+    response = supabase.table("dogs").select(
+        "id, name, pen, sector, status, description, photo_folder"
+    ).eq("category", category)
+
     if sector:
-        query += " AND sector = ?"
-        params.append(sector)
+        response = response.eq("sector", sector)
     if pen:
-        query += " AND pen = ?"
-        params.append(pen)
-    cur.execute(query, tuple(params))
-    rows = cur.fetchall()
-    conn.close()
+        response = response.eq("pen", pen)
+
+    data = response.execute()
+
+    if (hasattr(data, 'error') and data.error) or data.data is None:
+        await bot.send_message(callback_query.from_user.id, "❌ Error fetching dogs data.")
+        await wait_msg.delete()
+        return
+
+    rows = data.data  # Data from query
 
     if not rows:
         await bot.send_message(callback_query.from_user.id, "📕 No dogs found.")
+        await wait_msg.delete()
         return
-
-    media_group = []
+    
     profiles = []
+    media_group = []
     location_key = f"{sector or ''}_{pen or ''}".strip("_")
 
-    for idx, (name, pen, sector, status, desc, folder) in enumerate(rows):
-        photo_path = None
+    for dog in rows:
+        dog_id = dog['id']
+        name = dog['name']
+        pen_ = dog.get('pen')
+        sector_ = dog.get('sector')
+        status = dog.get('status')
+        desc = dog.get('description')
+
+        photos_response = supabase.storage.from_('kas.dogs').list(dog_id, {"limit": 100})
         photo_list = []
-        if folder and os.path.isdir(folder):
-            images = [f for f in os.listdir(folder) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
-            photo_list = [os.path.join(folder, img) for img in images]
-            if images:
-                photo_path = os.path.join(folder, images[0])
-                media_group.append(InputMediaPhoto(types.InputFile(photo_path)))
+        photo_path = None
+
+        if photos_response:
+            photo_filenames = [
+                file['name'] for file in photos_response
+                if file['name'].lower().endswith(('.jpg', '.jpeg', '.png'))
+            ]
+            if photo_filenames:
+                photo_list = photo_filenames
+                first_filename = photo_filenames[0]
+                result = supabase.storage.from_('kas.dogs').get_public_url(f"{dog_id}/{first_filename}")
+                photo_path = result.get('publicURL') if isinstance(result, dict) else result
+
+                if photo_path and photo_path.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    media_group.append(types.InputMediaPhoto(photo_path))
+                    print(f"[DEBUG] Valid image added: {photo_path}")
+                else:
+                    print(f"[WARNING] Skipped invalid or missing image URL for dog {dog_id}: {photo_path}")
+        else:
+            print(f"[WARNING] No photos found for dog {dog_id}")
 
         text = (
             f"🐶 *{escape_md(name)}*\n"
             f"📂 {escape_md(category)}\n"
-            f"📍 {escape_md(pen or sector or 'N/A')}\n"
+            f"📍 {escape_md(str(pen_ or sector_ or 'N/A'))}\n"
             f"📋 Status: {escape_md(status or 'N/A')}\n"
             f"📜 {escape_md(desc or 'No description yet')}"
         )
-        profiles.append((text, photo_path, photo_list, location_key))
+        profiles.append((text, dog_id, photo_list, location_key))
 
     user_dog_profiles[callback_query.from_user.id] = profiles
     user_dog_index[callback_query.from_user.id] = 0
 
+    # Send photos in groups of max 10 media items per message
     for i in range(0, len(media_group), 10):
         await bot.send_media_group(callback_query.from_user.id, media=media_group[i:i+10])
 
@@ -281,7 +356,7 @@ async def handle_photo(message: types.Message):
         if os.path.exists(temp_path):
             os.remove(temp_path)
         gc.collect()
-        
+
 @dp.callback_query_handler(lambda c: c.data == "more_rec_photos")
 async def handle_more_rec_photos(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
