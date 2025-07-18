@@ -26,3 +26,4 @@ torch==2.7.1
 torchvision==0.22.1
 typing_extensions==4.14.0
 yarl==1.20.0
+supabase==1.0.3
