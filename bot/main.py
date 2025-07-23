@@ -4,6 +4,10 @@ import re
 import sqlite3
 import uuid
 import tempfile
+import requests
+from bot.utils import escape_md  # if you're escaping MarkdownV2
+from aiogram import Bot
+from bot.utils import create_collage
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
 from aiogram.utils import executor
@@ -206,10 +210,17 @@ async def show_more_photos(callback_query: types.CallbackQuery):
     keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Back to Menu", callback_data="start_over"))
     await bot.send_message(callback_query.from_user.id, "✅ Done showing photos.", reply_markup=keyboard)
 
+import os
+import tempfile
+import requests
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from bot.utils import create_collage
+from bot.utils import escape_md  # if you're escaping MarkdownV2
+from aiogram import Bot
+
 async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=None):
     wait_msg = await bot.send_message(callback_query.from_user.id, "⏳ Please wait...")
 
-    # Query Supabase DB instead of SQLite
     response = supabase.table("dogs").select(
         "id, name, pen, sector, status, description, photo_folder"
     ).eq("category", category)
@@ -226,16 +237,14 @@ async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=N
         await wait_msg.delete()
         return
 
-    rows = data.data  # Data from query
-
+    rows = data.data
     if not rows:
         await bot.send_message(callback_query.from_user.id, "📕 No dogs found.")
         await wait_msg.delete()
         return
-    
+
     profiles = []
-    media_group = []
-    location_key = f"{sector or ''}_{pen or ''}".strip("_")
+    collage_input = []
 
     for dog in rows:
         dog_id = dog['id']
@@ -247,8 +256,6 @@ async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=N
 
         photos_response = supabase.storage.from_('kas.dogs').list(dog_id, {"limit": 100})
         photo_list = []
-        photo_path = None
-
         if photos_response:
             photo_filenames = [
                 file['name'] for file in photos_response
@@ -256,18 +263,27 @@ async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=N
             ]
             if photo_filenames:
                 photo_list = photo_filenames
-                first_filename = photo_filenames[0]
-                result = supabase.storage.from_('kas.dogs').get_public_url(f"{dog_id}/{first_filename}")
-                photo_path = result.get('publicURL') if isinstance(result, dict) else result
+        if not photo_list:
+            continue
 
-                if photo_path and photo_path.lower().endswith(('.jpg', '.jpeg', '.png')):
-                    media_group.append(types.InputMediaPhoto(photo_path))
-                    print(f"[DEBUG] Valid image added: {photo_path}")
-                else:
-                    print(f"[WARNING] Skipped invalid or missing image URL for dog {dog_id}: {photo_path}")
-        else:
-            print(f"[WARNING] No photos found for dog {dog_id}")
+        # Download the first photo
+        filename = photo_list[0]
+        res = supabase.storage.from_('kas.dogs').get_public_url(f"{dog_id}/{filename}")
+        url = res.get("publicURL") if isinstance(res, dict) else res
+        if url:
+            try:
+                img_data = requests.get(url).content
+                temp_img_path = os.path.join(tempfile.gettempdir(), f"{dog_id}_{filename}")
+                with open(temp_img_path, "wb") as f:
+                    f.write(img_data)
+                clean_name = name.split('\n')[0]  # just first line, or
+                clean_name = name.replace('\n', ' ')  # remove newlines
+                collage_input.append((temp_img_path, clean_name))
 
+            except Exception as e:
+                print(f"[ERROR] Downloading image {filename}: {e}")
+
+        # Save profile info for future use (pagination etc.)
         text = (
             f"🐶 *{escape_md(name)}*\n"
             f"📂 {escape_md(category)}\n"
@@ -275,19 +291,30 @@ async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=N
             f"📋 Status: {escape_md(status or 'N/A')}\n"
             f"📜 {escape_md(desc or 'No description yet')}"
         )
-        profiles.append((text, dog_id, photo_list, location_key))
+        profiles.append((text, dog_id, photo_list, f"{sector or ''}_{pen or ''}".strip("_")))
 
+    if collage_input:
+        collage_path = create_collage(collage_input, collage_name="Filtered_Dogs", cell_size=(300, 300), cols=2)
+        if collage_path:
+            with open(collage_path, "rb") as file:
+                await bot.send_photo(callback_query.from_user.id, photo=file, caption="🐶 Dogs found:")
+            os.remove(collage_path)
+
+        # Cleanup temp images
+        for path, _ in collage_input:
+            if os.path.exists(path):
+                os.remove(path)
+    else:
+        await bot.send_message(callback_query.from_user.id, "❌ No valid dog photos found.")
+
+    # Store for navigation
     user_dog_profiles[callback_query.from_user.id] = profiles
     user_dog_index[callback_query.from_user.id] = 0
-
-    # Send photos in groups of max 10 media items per message
-    for i in range(0, len(media_group), 10):
-        await bot.send_media_group(callback_query.from_user.id, media=media_group[i:i+10])
 
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("📋 View Dog Profiles", callback_data="show_profile_0"))
     keyboard.add(InlineKeyboardButton("🔙 Main Menu", callback_data="start_over"))
-    await bot.send_message(callback_query.from_user.id, "✅ Dogs shown in groups. What would you like next?", reply_markup=keyboard)
+    await bot.send_message(callback_query.from_user.id, "✅ Dogs shown in collage. What next?", reply_markup=keyboard)
 
     await wait_msg.delete()
 
