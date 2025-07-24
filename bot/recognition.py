@@ -6,6 +6,7 @@ from torchvision import models, transforms
 from PIL import Image
 import numpy as np
 import pickle
+from supabase import create_client
 
 MODEL = None
 TRANSFORM = transforms.Compose([
@@ -33,66 +34,25 @@ def extract_features(image_path: str) -> np.ndarray:
         features = model(tensor)
     return features.numpy().flatten()
 
-def get_dog_by_photo(image_path: str, threshold: float = 0.8):
-    query_emb = extract_features(image_path).flatten()
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-    conn = sqlite3.connect("db/dogs.db")
-    cur = conn.cursor()
-    cur.execute("""
-        SELECT id, name, pen, status, description, photo_folder, embeddings, category, sector 
-        FROM dogs
-    """)
-    rows = cur.fetchall()
-    conn.close()
+def get_dog_by_photo(file_path: str) -> dict:
+    try:
+        # Expecting file named like 'dogid_filename.jpg'
+        filename = os.path.basename(file_path)
+        dog_id = filename.split('_')[0]
 
-    best_score = -1.0
-    best_dog = None
+        response = supabase.table("dogs").select("*").eq("id", dog_id).single().execute()
 
-    for row in rows:
-        dog_id, name, pen, status, desc, folder, emb_blob, category, sector = row
-        if emb_blob is None:
-            continue
-
-        try:
-            emb_list = pickle.loads(emb_blob)
-        except Exception as e:
-            print(f"⚠️ Failed to load embeddings for dog {dog_id}: {e}")
-            continue
-
-        for db_emb in emb_list:
-            db_emb = np.array(db_emb).flatten()
-            if db_emb.shape != (512,):
-                print(f"⚠️ Skipping mismatched embedding shape: {db_emb.shape}")
-                continue
-
-            score = np.dot(query_emb, db_emb) / (np.linalg.norm(query_emb) * np.linalg.norm(db_emb))
-            if score > best_score:
-                best_score = score
-                first_photo = None
-                photo_list = []
-                if folder and os.path.isdir(folder):
-                    try:
-                        photos = [f for f in os.listdir(folder) if f.lower().endswith((".jpg", ".jpeg", ".png"))]
-                        photos.sort()
-                        if photos:
-                            first_photo = os.path.join(folder, photos[0])
-                            photo_list = [os.path.join(folder, p) for p in photos]
-                    except Exception as e:
-                        print(f"⚠️ Error accessing photo folder for dog {dog_id}: {e}")
-
-                best_dog = {
-                    "id": dog_id,
-                    "name": name,
-                    "pen": pen,
-                    "sector": sector,
-                    "category": category,
-                    "status": status,
-                    "description": desc,
-                    "photo_path": first_photo,
-                    "photo_list": photo_list,
-                    "score": score,
-                }
-
-    if best_dog and best_score >= threshold:
-        return best_dog
-    return None
+        if response.data:
+            dog = response.data
+            dog["photo_path"] = file_path
+            return dog
+        else:
+            print(f"[WARN] No dog found for ID: {dog_id}")
+            return {}
+    except Exception as e:
+        print(f"[ERROR] Fetching dog by photo: {e}")
+        return {}

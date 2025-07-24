@@ -6,7 +6,6 @@ import uuid
 import tempfile
 import requests
 from bot.utils import escape_md  # if you're escaping MarkdownV2
-from aiogram import Bot
 from bot.utils import create_collage
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, InputMediaPhoto
@@ -14,6 +13,8 @@ from aiogram.utils import executor
 from kas_config import BOT_TOKEN
 from bot.recognition import get_dog_by_photo
 from supabase import create_client, Client
+from PIL import Image, ImageDraw, ImageFont
+
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(bot)
@@ -48,6 +49,29 @@ async def start(message: types.Message):
         reply_markup=keyboard,
         parse_mode="MarkdownV2"
     )
+def create_placeholder_image(text, size=(350, 300)):
+    img = Image.new("RGB", size, color="white")
+    draw = ImageDraw.Draw(img)
+    font_size = 30
+    try:
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except:
+        font = ImageFont.load_default()
+
+    no_photo_text = "No photo"
+    bbox = draw.textbbox((0, 0), no_photo_text, font=font)
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
+    draw.text(((size[0] - w) / 2, size[1] // 4 - h // 2), no_photo_text, fill="gray", font=font)
+
+    bbox = draw.textbbox((0, 0), text, font=font)
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
+    draw.text(((size[0] - w) / 2, size[1] * 3 // 4 - h // 2), text, fill="black", font=font)
+
+    temp_path = os.path.join(tempfile.gettempdir(), f"placeholder_{text.replace(' ', '_')}.jpg")
+    img.save(temp_path)
+    return temp_path
 
 def get_categories():
     try:
@@ -210,19 +234,32 @@ async def show_more_photos(callback_query: types.CallbackQuery):
     keyboard = InlineKeyboardMarkup().add(InlineKeyboardButton("🔙 Back to Menu", callback_data="start_over"))
     await bot.send_message(callback_query.from_user.id, "✅ Done showing photos.", reply_markup=keyboard)
 
-import os
-import tempfile
-import requests
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from bot.utils import create_collage
-from bot.utils import escape_md  # if you're escaping MarkdownV2
-from aiogram import Bot
+def create_placeholder_image(text, size=(350, 300)):
+    # Create a blank white image
+    img = Image.new("RGB", size, color="white")
+    draw = ImageDraw.Draw(img)
+    font_size = 30
+    try:
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except:
+        font = ImageFont.load_default()
+
+    # Draw "No photo" text centered near the top
+    no_photo_text = "No photo"
+    bbox = draw.textbbox((0, 0), no_photo_text, font=font)
+    w, h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    draw.text(((size[0] - w) / 2, size[1] // 4 - h // 2), no_photo_text, fill="gray", font=font)
+
+    # Save to temp file and return path
+    temp_path = os.path.join(tempfile.gettempdir(), f"placeholder_{text.replace(' ', '_')}.jpg")
+    img.save(temp_path)
+    return temp_path
 
 async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=None):
     wait_msg = await bot.send_message(callback_query.from_user.id, "⏳ Please wait...")
 
     response = supabase.table("dogs").select(
-        "id, name, pen, sector, status, description, photo_folder"
+        "id, name, pen, sector, status, description"
     ).eq("category", category)
 
     if sector:
@@ -254,7 +291,7 @@ async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=N
         status = dog.get('status')
         desc = dog.get('description')
 
-        photos_response = supabase.storage.from_('kas.dogs').list(dog_id, {"limit": 100})
+        photos_response = supabase.storage.from_('kas.dogs').list(str(dog_id), {"limit": 100})
         photo_list = []
         if photos_response:
             photo_filenames = [
@@ -263,41 +300,59 @@ async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=N
             ]
             if photo_filenames:
                 photo_list = photo_filenames
-        if not photo_list:
-            continue
 
-        # Download the first photo
-        filename = photo_list[0]
-        res = supabase.storage.from_('kas.dogs').get_public_url(f"{dog_id}/{filename}")
-        url = res.get("publicURL") if isinstance(res, dict) else res
-        if url:
-            try:
-                img_data = requests.get(url).content
-                temp_img_path = os.path.join(tempfile.gettempdir(), f"{dog_id}_{filename}")
-                with open(temp_img_path, "wb") as f:
-                    f.write(img_data)
-                clean_name = name.split('\n')[0]  # just first line, or
-                clean_name = name.replace('\n', ' ')  # remove newlines
-                collage_input.append((temp_img_path, clean_name))
+        if photo_list:
+            # Download the first photo
+            filename = photo_list[0]
+            res = supabase.storage.from_('kas.dogs').get_public_url(f"{dog_id}/{filename}")
+            url = res.get("publicURL") if isinstance(res, dict) else res
+            if url:
+                try:
+                    img_data = requests.get(url).content
+                    temp_img_path = os.path.join(tempfile.gettempdir(), f"{dog_id}_{filename}")
+                    with open(temp_img_path, "wb") as f:
+                        f.write(img_data)
+                    clean_name = name.replace('\n', ' ')  # remove newlines
+                    collage_input.append((temp_img_path, clean_name))
 
-            except Exception as e:
-                print(f"[ERROR] Downloading image {filename}: {e}")
+                except Exception as e:
+                    print(f"[ERROR] Downloading image {filename}: {e}")
+
+        else:
+            # No photos found - create placeholder image with dog name
+            placeholder_path = create_placeholder_image(name)
+            collage_input.append((placeholder_path, name.replace('\n', ' ')))
 
         # Save profile info for future use (pagination etc.)
         text = (
             f"🐶 *{escape_md(name)}*\n"
-            f"📂 {escape_md(category)}\n"
+            f"📂 {escape_md(category or 'N/A')}\n"
             f"📍 {escape_md(str(pen_ or sector_ or 'N/A'))}\n"
             f"📋 Status: {escape_md(status or 'N/A')}\n"
             f"📜 {escape_md(desc or 'No description yet')}"
         )
         profiles.append((text, dog_id, photo_list, f"{sector or ''}_{pen or ''}".strip("_")))
 
+    # Send number of dogs and filter info before the collage
+    filter_text = []
+    if category:
+        filter_text.append(f"{category}")
+    if sector:
+        filter_text.append(f" {sector}")
+    if pen:
+        filter_text.append(f"  {pen}")
+    filter_summary = "=> ".join(filter_text) if filter_text else "All dogs"
+
+    await bot.send_message(
+        callback_query.from_user.id,
+        f"🐾 {len(rows)} dog{'s' if len(rows) != 1 else ''} filtered by {filter_summary}."
+    )
+
     if collage_input:
-        collage_path = create_collage(collage_input, collage_name="Filtered_Dogs", cell_size=(300, 300), cols=2)
+        collage_path = create_collage(collage_input, collage_name="Filtered_Dogs", cell_size=(350, 300), cols=2)
         if collage_path:
             with open(collage_path, "rb") as file:
-                await bot.send_photo(callback_query.from_user.id, photo=file, caption="🐶 Dogs found:")
+                await bot.send_photo(callback_query.from_user.id, photo=file, )
             os.remove(collage_path)
 
         # Cleanup temp images
@@ -305,7 +360,7 @@ async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=N
             if os.path.exists(path):
                 os.remove(path)
     else:
-        await bot.send_message(callback_query.from_user.id, "❌ No valid dog photos found.")
+        await bot.send_message(callback_query.from_user.id, "❌ No valid dog photos or placeholders found.")
 
     # Store for navigation
     user_dog_profiles[callback_query.from_user.id] = profiles
