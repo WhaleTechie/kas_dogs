@@ -25,6 +25,7 @@ def escape_md(text):
 def clean_text(text):
     return text.encode("utf-16", "surrogatepass").decode("utf-16", "ignore")
 
+profile_cache = {}
 recognized_dog_photos = {}
 user_dog_profiles = {}
 user_dog_index = {}
@@ -165,55 +166,6 @@ async def handle_pen(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     _, sector, pen = callback_query.data.split("_", 2)
     await show_dogs_by_filters(callback_query, category="shelter", sector=sector, pen=pen)
-
-@dp.callback_query_handler(lambda c: c.data.startswith("show_profile_"))
-async def show_next_profile(callback_query: types.CallbackQuery):
-    await bot.answer_callback_query(callback_query.id)
-    user_id = callback_query.from_user.id
-    idx = int(callback_query.data.split("_")[-1])
-    profiles = user_dog_profiles.get(user_id, [])
-
-    if idx < len(profiles):
-        text, dog_id, photo_filenames, location = profiles[idx]  # dog_id matches your DB id
-
-        keyboard = InlineKeyboardMarkup()
-        if photo_filenames and len(photo_filenames) > 1:
-            keyboard.add(InlineKeyboardButton("📷 More Photos", callback_data=f"more_photos_{idx}"))
-
-        remaining = len(profiles) - idx - 1
-        if remaining:
-            keyboard.add(InlineKeyboardButton(f"📄 View another dog ({remaining} left)", callback_data=f"show_profile_{idx+1}"))
-
-        keyboard.add(InlineKeyboardButton("🔙 Back to Menu", callback_data="start_over"))
-
-        if photo_filenames:
-            first_filename = photo_filenames[0]
-            result = supabase.storage.from_('kas.dogs').get_public_url(f"{dog_id}/{first_filename}")
-            first_photo_url = result.get("publicURL") if isinstance(result, dict) else result
-
-            if first_photo_url and first_photo_url.lower().endswith(('.jpg', '.jpeg', '.png')):
-                await bot.send_photo(
-                    callback_query.from_user.id,
-                    photo=first_photo_url,
-                    caption=clean_text(text),
-                    parse_mode="MarkdownV2",
-                    reply_markup=keyboard
-                )
-            else:
-                print(f"[WARNING] Invalid image URL for dog {dog_id}: {first_photo_url}")
-                await bot.send_message(
-                    callback_query.from_user.id,
-                    clean_text(text),
-                    parse_mode="MarkdownV2",
-                    reply_markup=keyboard
-                )
-    else:
-        await bot.send_message(
-            callback_query.from_user.id,
-            clean_text(text),
-            parse_mode="MarkdownV2",
-            reply_markup=keyboard
-        )
 
 @dp.callback_query_handler(lambda c: c.data.startswith("more_photos_"))
 async def show_more_photos(callback_query: types.CallbackQuery):
@@ -372,6 +324,110 @@ async def show_dogs_by_filters(callback_query, category=None, sector=None, pen=N
     await bot.send_message(callback_query.from_user.id, "✅ Dogs shown in collage. What next?", reply_markup=keyboard)
 
     await wait_msg.delete()
+
+async def get_dog_by_id(dog_id):
+    try:
+        response = supabase.table("dogs").select("*").eq("id", dog_id).single().execute()
+        if response:
+            return response.data
+        else:
+            return None
+    except Exception as e:
+        print(f"Error fetching dog by ID {dog_id}: {e}")
+        return None
+
+@dp.callback_query_handler(lambda c: c.data.startswith("dog_"))
+async def show_dog_profile_handler(callback_query: types.CallbackQuery):
+    dog_id = callback_query.data.split("_")[1]
+    dog = await get_dog_by_id(dog_id)  # Your data fetch function
+
+    if not dog:
+        await callback_query.answer("Dog not found.", show_alert=True)
+        return
+
+    profile_kb = InlineKeyboardMarkup(row_width=2)
+    profile_kb.insert(InlineKeyboardButton(text="⬅️ Back to Dogs Profile", callback_data="back_to_dogs"))
+    profile_kb.insert(InlineKeyboardButton(text="🏠 Back to Menu", callback_data="back_to_menu"))
+
+    wait_message = await bot.send_message(callback_query.from_user.id, "Please wait...")
+
+    text = (
+        f"🐶 *{escape_md(dog['name'])}*\n"
+        f"📂 {escape_md(dog.get('category', 'N/A'))}\n"
+        f"📍 {escape_md(str(dog.get('pen') or dog.get('sector') or 'N/A'))}\n"
+        f"📋 Status: {escape_md(dog.get('status', 'N/A'))}\n"
+        f"📜 {escape_md(dog.get('description', 'No description yet'))}"
+    )
+
+    photo_path = None
+
+    photos_response = supabase.storage.from_('kas.dogs').list(str(dog_id), {"limit": 100})
+    if photos_response:
+        photo_filenames = [
+            file['name'] for file in photos_response
+            if file['name'].lower().endswith(('.jpg', '.jpeg', '.png'))
+        ]
+        if photo_filenames:
+            first_photo = photo_filenames[0]
+            res = supabase.storage.from_('kas.dogs').get_public_url(f"{dog_id}/{first_photo}")
+            url = res.get("publicURL") if isinstance(res, dict) else res
+
+            if url:
+                try:
+                    img_data = requests.get(url, timeout=10).content
+                    photo_path = os.path.join(tempfile.gettempdir(), f"{dog_id}_{first_photo}")
+                    with open(photo_path, "wb") as f:
+                        f.write(img_data)
+                except Exception as e:
+                    print(f"[ERROR] Downloading image {first_photo}: {e}")
+
+    if not photo_path:
+        photo_path = create_placeholder_image(dog['name'])
+
+    if photo_path and os.path.exists(photo_path):
+        try:
+            with open(photo_path, "rb") as photo_file:
+                await bot.send_photo(
+                    callback_query.from_user.id,
+                    photo=photo_file,
+                    caption=text,
+                    parse_mode="MarkdownV2",
+                    reply_markup=profile_kb
+                )
+        finally:
+            if os.path.exists(photo_path):
+                os.remove(photo_path)
+    else:
+        await bot.send_message(
+            callback_query.from_user.id,
+            text,
+            parse_mode="MarkdownV2",
+            reply_markup=profile_kb
+        )
+
+    await bot.delete_message(callback_query.from_user.id, wait_message.message_id)
+    await callback_query.answer()
+
+@dp.callback_query_handler(lambda c: c.data == "show_profile_0")
+async def show_filtered_profiles(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    filtered_profiles = user_dog_profiles.get(user_id, [])
+
+    if not filtered_profiles:
+        await callback_query.answer("No profiles found.", show_alert=True)
+        return
+
+    keyboard = InlineKeyboardMarkup(row_width=3)
+    for text, dog_id, photo_list, filter_key in filtered_profiles:
+        first_line = text.split("\n")[0]
+        dog_name_match = re.match(r"🐶 \*(.*)\*", first_line)
+        dog_name = dog_name_match.group(1) if dog_name_match else "Dog"
+        keyboard.insert(InlineKeyboardButton(dog_name, callback_data=f"dog_{dog_id}"))
+
+    await callback_query.message.edit_text(
+        "🐾 Choose a dog to view its profile:",
+        reply_markup=keyboard
+    )
 
 @dp.callback_query_handler(lambda c: c.data == "start_over")
 async def return_to_main(callback_query: types.CallbackQuery):

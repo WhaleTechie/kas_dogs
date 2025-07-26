@@ -28,13 +28,9 @@ def get_dog_by_photo(file_path: str) -> dict:
     }
 
 def create_collage(dog_data, collage_name="Dogs Collage", cell_size=(350, 300), cols=4):
-    """
-    dog_data: list of tuples (image_path, dog_name)
-    """
     if not dog_data:
         return None
 
-    # Load all images and prepare names
     images = []
     for path, name in dog_data:
         try:
@@ -47,34 +43,40 @@ def create_collage(dog_data, collage_name="Dogs Collage", cell_size=(350, 300), 
     cell_width, cell_height = cell_size
     font_size = 24
 
-    # Load a basic font
     try:
         font = ImageFont.truetype("arial.ttf", font_size)
     except:
         font = ImageFont.load_default()
 
+    # Extra space at the top for the caption/empty line
+    top_margin = font_size + 20  # adjust space height here
+
     collage_width = cols * cell_width
-    collage_height = rows * (cell_height + font_size + 10)
+    collage_height = rows * (cell_height + font_size + 10) + top_margin
 
     collage = Image.new("RGB", (collage_width, collage_height), color="white")
     draw = ImageDraw.Draw(collage)
 
+    # Draw empty line or caption text at the top (if you want it empty, just skip this)
+    # For example, to add a blank line, just do nothing here.
+    # Or to add text:
+    # caption_text = "Dogs filtered by ..."
+    # w, h = draw.textsize(caption_text, font=font)
+    # draw.text(((collage_width - w) / 2, top_margin // 2 - h // 2), caption_text, fill="black", font=font)
+
     for idx, (img, name) in enumerate(images):
-        # Resize image proportionally
         img.thumbnail(cell_size, Image.LANCZOS)
 
         x = (idx % cols) * cell_width + (cell_width - img.width) // 2
-        y = (idx // cols) * (cell_height + font_size + 10)
+        y = top_margin + (idx // cols) * (cell_height + font_size + 10)
 
         collage.paste(img, (x, y))
 
-        # Draw name centered
         name_width = draw.textlength(name, font=font)
         text_x = (idx % cols) * cell_width + (cell_width - name_width) // 2
         text_y = y + img.height + 5
         draw.text((text_x, text_y), name, fill="black", font=font)
 
-    # Save to temp file
     temp_dir = os.getenv("TEMP") or "/tmp"
     out_path = os.path.join(temp_dir, f"{collage_name.replace(' ', '_')}.jpg")
     collage.save(out_path, format="JPEG")
