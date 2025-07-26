@@ -1,8 +1,13 @@
-# bot/utils.py
-
 import re
-from PIL import Image, ImageDraw, ImageFont
 import os
+import tempfile
+from PIL import Image, ImageDraw, ImageFont
+
+def escape_md(text: str) -> str:
+    return re.sub(r'([_\*\[\]()~`>#+\-=|{}.!])', r'\\\1', str(text))
+
+def clean_text(text: str) -> str:
+    return text.encode("utf-16", "surrogatepass").decode("utf-16", "ignore")
 
 def escape_md(text: str) -> str:
     """
@@ -11,21 +16,6 @@ def escape_md(text: str) -> str:
     if not text:
         return ""
     return re.sub(r'([_*[\]()~`>#+-=|{}.!])', r'\\\1', text)
-
-def get_dog_by_photo(file_path: str) -> dict:
-    """
-    Dummy function that should be replaced with your actual dog recognition logic.
-    """
-    # Placeholder: replace with actual recognition logic
-    return {
-        "name": "Buddy",
-        "category": "street",
-        "pen": "",
-        "sector": "",
-        "status": "Healthy",
-        "description": "Loves attention and chasing butterflies.",
-        "photo_path": file_path,
-    }
 
 def create_collage(dog_data, collage_name="Dogs Collage", cell_size=(350, 300), cols=4):
     if not dog_data:
@@ -57,13 +47,6 @@ def create_collage(dog_data, collage_name="Dogs Collage", cell_size=(350, 300), 
     collage = Image.new("RGB", (collage_width, collage_height), color="white")
     draw = ImageDraw.Draw(collage)
 
-    # Draw empty line or caption text at the top (if you want it empty, just skip this)
-    # For example, to add a blank line, just do nothing here.
-    # Or to add text:
-    # caption_text = "Dogs filtered by ..."
-    # w, h = draw.textsize(caption_text, font=font)
-    # draw.text(((collage_width - w) / 2, top_margin // 2 - h // 2), caption_text, fill="black", font=font)
-
     for idx, (img, name) in enumerate(images):
         img.thumbnail(cell_size, Image.LANCZOS)
 
@@ -81,3 +64,27 @@ def create_collage(dog_data, collage_name="Dogs Collage", cell_size=(350, 300), 
     out_path = os.path.join(temp_dir, f"{collage_name.replace(' ', '_')}.jpg")
     collage.save(out_path, format="JPEG")
     return out_path
+
+def create_placeholder_image(text, size=(350, 300)):
+    img = Image.new("RGB", size, color="white")
+    draw = ImageDraw.Draw(img)
+    font_size = 30
+    try:
+        font = ImageFont.truetype("arial.ttf", font_size)
+    except:
+        font = ImageFont.load_default()
+
+    no_photo_text = "No photo"
+    bbox = draw.textbbox((0, 0), no_photo_text, font=font)
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
+    draw.text(((size[0] - w) / 2, size[1] // 4 - h // 2), no_photo_text, fill="gray", font=font)
+
+    bbox = draw.textbbox((0, 0), text, font=font)
+    w = bbox[2] - bbox[0]
+    h = bbox[3] - bbox[1]
+    draw.text(((size[0] - w) / 2, size[1] * 3 // 4 - h // 2), text, fill="black", font=font)
+
+    temp_path = os.path.join(tempfile.gettempdir(), f"placeholder_{text.replace(' ', '_')}.jpg")
+    img.save(temp_path)
+    return temp_path
