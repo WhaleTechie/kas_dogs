@@ -40,9 +40,32 @@ async def handle_catalog_callback(callback_query: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data.startswith("category_"))
 async def handle_category(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
-    category = callback_query.data[len("category_") :]
+    category = callback_query.data[len("category_"):]
 
     if category.lower() == "shelter":
+        # 🖼️ Step 1: Fetch and send shelter plan image from Supabase
+        try:
+            # Adjust the path if you placed it in a subfolder (e.g., 'maps/shelter_plan.jpg')
+            res = supabase.storage.from_('kas.dogs').get_public_url("Shelter_plan.jpg")
+            image_url = res.get("publicURL") if isinstance(res, dict) else res
+
+            if image_url:
+                caption_text = escape_md("🗺️ Shelter Plan\nUse this map to find the sector you're interested in.")
+
+                await bot.send_photo(
+                    chat_id=callback_query.from_user.id,
+                    photo=image_url,
+                    caption=caption_text,
+                    parse_mode="MarkdownV2"
+                )
+
+            else:
+                await bot.send_message(callback_query.from_user.id, "⚠️ Shelter plan image not found.")
+        except Exception as e:
+            print(f"[ERROR] Failed to load shelter plan from Supabase: {e}")
+            await bot.send_message(callback_query.from_user.id, "⚠️ Shelter plan not available.")
+
+        # Step 2: Fetch and display sector list
         response = supabase.table("dogs") \
             .select("sector") \
             .eq("category", category) \
@@ -77,7 +100,10 @@ async def handle_sector(callback_query: types.CallbackQuery):
         .neq("pen", None) \
         .execute()
 
-    pens = list({row["pen"] for row in response.data}) if response.data else []
+    def natural_sort_key(s):
+        return [int(text) if text.isdigit() else text.lower() for text in re.split(r'(\d+)', s)]
+
+    pens = sorted({row["pen"] for row in response.data}, key=natural_sort_key) if response.data else []
 
     if not pens or len(pens) == 1:
         pen = pens[0] if pens else None
