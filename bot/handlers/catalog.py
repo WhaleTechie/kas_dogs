@@ -37,46 +37,64 @@ async def handle_catalog_callback(callback_query: types.CallbackQuery):
         reply_markup=keyboard
     )
 
+SECTOR_EMOJIS = {
+    "Big pens": "🟣 Big Pens",
+    "Q": "🟡 Q",
+    "PP": "⚪ PP",
+    "VC": "🟢 VC",
+    "OC": "🔵 OC",
+    "CH": "🟪 CH",
+    "PR": "🔴 PR",
+    "B": "🟤 B",
+    "NP": "🔷 NP",
+    "OB": "🟠 OB",
+    "CL": "🧿 Clinic",
+    "WK": "🌸 WK",
+    "BB": "⬜ BB",
+    "VR": "🟩 VR", 
+    
+}
+
 @dp.callback_query_handler(lambda c: c.data.startswith("category_"))
 async def handle_category(callback_query: types.CallbackQuery):
     await bot.answer_callback_query(callback_query.id)
     category = callback_query.data[len("category_"):]
 
     if category.lower() == "shelter":
-        # 🖼️ Step 1: Fetch and send shelter plan image from Supabase
+        # Step 1: Show plan image
         try:
-            # Adjust the path if you placed it in a subfolder (e.g., 'maps/shelter_plan.jpg')
             res = supabase.storage.from_('kas.dogs').get_public_url("Shelter_plan.jpg")
             image_url = res.get("publicURL") if isinstance(res, dict) else res
 
             if image_url:
                 caption_text = escape_md("🗺️ Shelter Plan\nUse this map to find the sector you're interested in.")
-
                 await bot.send_photo(
                     chat_id=callback_query.from_user.id,
                     photo=image_url,
                     caption=caption_text,
                     parse_mode="MarkdownV2"
                 )
-
             else:
                 await bot.send_message(callback_query.from_user.id, "⚠️ Shelter plan image not found.")
         except Exception as e:
             print(f"[ERROR] Failed to load shelter plan from Supabase: {e}")
             await bot.send_message(callback_query.from_user.id, "⚠️ Shelter plan not available.")
 
-        # Step 2: Fetch and display sector list
+        # Step 2: Fetch sector list and build 3-column keyboard
         response = supabase.table("dogs") \
             .select("sector") \
             .eq("category", category) \
             .neq("sector", None) \
             .execute()
 
-        sectors = list({row["sector"] for row in response.data}) if response.data else []
+        sectors = sorted(set(row["sector"] for row in response.data)) if response.data else []
 
-        keyboard = InlineKeyboardMarkup(row_width=2)
+        keyboard = InlineKeyboardMarkup(row_width=3)  # 3 columns
+
         for sector in sectors:
-            keyboard.add(InlineKeyboardButton(f"{sector}", callback_data=f"sector_{sector}"))
+            label = SECTOR_EMOJIS.get(sector, sector)
+            keyboard.insert(InlineKeyboardButton(label, callback_data=f"sector_{sector}"))
+
         keyboard.add(InlineKeyboardButton("🔙 Back to Catalog", callback_data="catalog"))
 
         await bot.send_message(
@@ -85,6 +103,7 @@ async def handle_category(callback_query: types.CallbackQuery):
             reply_markup=keyboard, 
             parse_mode="MarkdownV2"
         )
+
     else:
         await show_dogs_by_filters(callback_query, category=category)
 
@@ -110,9 +129,9 @@ async def handle_sector(callback_query: types.CallbackQuery):
         await show_dogs_by_filters(callback_query, category="shelter", sector=sector, pen=pen)
         return
 
-    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard = InlineKeyboardMarkup(row_width=3)
     for pen in pens:
-        keyboard.add(InlineKeyboardButton(f"{pen}", callback_data=f"pen_{sector}_{pen}"))
+        keyboard.insert(InlineKeyboardButton(f"{pen}", callback_data=f"pen_{sector}_{pen}"))
     keyboard.add(InlineKeyboardButton("🔙 Back to Sectors", callback_data="category_shelter"))
 
     await bot.send_message(
